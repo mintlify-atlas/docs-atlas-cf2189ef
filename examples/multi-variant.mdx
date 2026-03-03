@@ -1,0 +1,406 @@
+---
+title: Multi-Variant Example
+description: Learn how to create multiple variants of the same application with different configurations or versions
+---
+
+This example demonstrates how to create multiple variants of an application. We'll look at two real-world examples:
+
+1. **Lsky Pro** - An app with `latest` (stable) and `dev` (development) variants
+2. **Nginx Base** - A base image with framework-specific variants (vue, svelte)
+
+## Why Use Variants?
+
+Variants are useful when you need:
+
+- Different release channels (stable, beta, dev)
+- Framework-specific configurations (vue, react, svelte)
+- Different feature sets or build configurations
+- Multiple version streams maintained in parallel
+
+## Example 1: Lsky Pro (App Variants)
+
+Lsky Pro is an image hosting application that maintains both stable releases and development builds.
+
+### Project Structure
+
+```
+apps/lsky/
+├── meta.json
+├── Dockerfile
+├── docker-entrypoint.sh
+└── default.conf
+```
+
+### Configuration
+
+```json meta.json
+{
+  "name": "lsky",
+  "type": "app",
+  "title": "兰空图床",
+  "slogan": "兰空图床，轻量级图片云存储系统",
+  "description": "兰空图床(Lsky Pro) - Your photo album on the cloud.",
+  "license": "GPL-3.0",
+  "variants": {
+    "latest": {
+      "version": "2.1",
+      "sha": "923f567e0a93c7291c4c9fc5279da9847ed39f7e",
+      "checkver": {
+        "type": "tag",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "38d52c4",
+      "sha": "38d52c4609eb85236b45ac75acac2ced55174953",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Understanding Variant Configuration
+
+<Tabs>
+  <Tab title="Latest Variant">
+    ```json
+    "latest": {
+      "version": "2.1",
+      "sha": "923f567e0a93c7291c4c9fc5279da9847ed39f7e",
+      "checkver": {
+        "type": "tag",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    }
+    ```
+    
+    **Latest (Stable) Variant:**
+    - Uses semantic versioning (`2.1`)
+    - Tracks git tags for version updates
+    - Produces Docker tags: `latest` and `2.1`
+    - Recommended for production use
+  </Tab>
+  
+  <Tab title="Dev Variant">
+    ```json
+    "dev": {
+      "version": "38d52c4",
+      "sha": "38d52c4609eb85236b45ac75acac2ced55174953",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+    ```
+    
+    **Dev (Development) Variant:**
+    - Uses git commit SHA as version
+    - Tracks latest commits on main branch
+    - Produces Docker tags: `dev` and `dev-38d52c4`
+    - Useful for testing unreleased features
+  </Tab>
+</Tabs>
+
+<Note>
+The `checkver.type` determines how versions are detected:
+- `tag`: Monitors GitHub releases/tags
+- `sha`: Monitors latest commits
+</Note>
+
+### Shared Dockerfile
+
+Both variants use the same Dockerfile with different build arguments:
+
+```dockerfile Dockerfile
+FROM php:8.0.2-alpine3.13 AS builder
+
+WORKDIR /app
+ADD --chmod=0755 https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
+
+ARG LSKY_VERSION=2.1
+ARG REPO_URL=https://github.com/lsky-org/lsky-pro/releases/download/${LSKY_VERSION}/lsky-pro-${LSKY_VERSION}.zip
+RUN curl -fsSL ${REPO_URL} -o lsky-pro.zip && \
+    unzip lsky-pro.zip && \
+    rm lsky-pro.zip && \
+    tar -czf /tmp/app.tar.gz .
+
+FROM nginx:alpine AS nginx
+
+FROM php:8.0.2-fpm-alpine3.12
+
+WORKDIR /app
+
+COPY --from=nginx /etc/nginx /etc/nginx
+COPY --from=nginx /docker-entrypoint.sh /docker-entrypoint.sh
+COPY --from=nginx /docker-entrypoint.d /docker-entrypoint.d
+
+COPY --from=builder /tmp/app.tar.gz /tmp/app.tar.gz
+COPY --from=builder /usr/local/bin/install-php-extensions /usr/local/bin/install-php-extensions
+
+COPY ./docker-entrypoint.sh /docker-entrypoint.d/00-entrypoint.sh
+COPY ./default.conf /etc/nginx/conf.d/default.conf
+
+RUN install-php-extensions @composer pdo_mysql pdo_pgsql pdo_sqlsrv bcmath imagick redis && \
+    mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" && \
+    apk update && apk add --no-cache nginx && \
+    chmod +x /docker-entrypoint.sh && \
+    chmod +x -R /docker-entrypoint.d && \
+    rm -rf /var/cache/apk/* && \
+    tar -czf /tmp/nginx.tar.gz /etc/nginx
+
+ENTRYPOINT [ "/docker-entrypoint.sh" ]
+CMD [ "nginx", "-g", "daemon off;"]
+
+EXPOSE 80
+VOLUME /etc/nginx
+VOLUME /app
+```
+
+<Tip>
+The `LSKY_VERSION` argument is automatically populated from the variant's `version` field, so you can use one Dockerfile for multiple variants.
+</Tip>
+
+## Example 2: Nginx Base (Framework Variants)
+
+The nginx base image provides framework-specific configurations using separate Dockerfiles.
+
+### Project Structure
+
+```
+base/nginx/
+├── meta.json
+├── Dockerfile          # Default variant
+├── Dockerfile.vue      # Vue-specific variant
+├── Dockerfile.svelte   # Svelte-specific variant
+└── conf/
+    ├── default.conf
+    ├── default.vue.conf
+    └── default.svelte.conf
+```
+
+### Configuration
+
+```json meta.json
+{
+  "name": "nginx",
+  "type": "base",
+  "description": "Nginx with custom configuration, based on alpine. The root path is /app.",
+  "variants": {
+    "latest": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "vue": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=vue",
+          "type=raw,value={{version}}-vue"
+        ]
+      }
+    },
+    "svelte": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=svelte",
+          "type=raw,value={{version}}-svelte"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Framework-Specific Dockerfiles
+
+<CodeGroup>
+
+```dockerfile Dockerfile.vue
+FROM nginx:alpine
+
+WORKDIR /app
+COPY ./conf/default.vue.conf /etc/nginx/conf.d/default.conf
+
+CMD ["nginx", "-g", "daemon off;"]
+
+EXPOSE 80
+```
+
+```dockerfile Dockerfile.svelte
+FROM nginx:alpine
+
+WORKDIR /app
+COPY ./conf/default.svelte.conf /etc/nginx/conf.d/default.conf
+
+CMD ["nginx", "-g", "daemon off;"]
+
+EXPOSE 80
+```
+
+</CodeGroup>
+
+<Note>
+When a variant name matches a Dockerfile suffix (e.g., `Dockerfile.vue` for the `vue` variant), that Dockerfile is automatically used instead of the default `Dockerfile`.
+</Note>
+
+### How Variant Dockerfiles Work
+
+The system follows this naming convention:
+
+| Variant Name | Dockerfile Used |
+|--------------|----------------|
+| `latest` | `Dockerfile` |
+| `vue` | `Dockerfile.vue` |
+| `svelte` | `Dockerfile.svelte` |
+| `react` | `Dockerfile.react` |
+
+## Docker Tag Customization
+
+The `docker.tags` field allows you to customize image tags:
+
+```json
+"docker": {
+  "tags": [
+    "type=raw,value=latest",
+    "type=raw,value={{version}}"
+  ]
+}
+```
+
+Available template variables:
+- `{{version}}`: The version field value
+- `{{sha}}`: The full git SHA
+- `{{variant}}`: The variant name
+
+<Tip>
+You can create multiple tags for the same image. For example, the `latest` variant produces both `latest` and `2.1` tags.
+</Tip>
+
+## Best Practices
+
+### Version Checking Strategy
+
+- **Production releases**: Use `type: tag` to track GitHub releases
+- **Development builds**: Use `type: sha` to track latest commits
+- **Manual control**: Use `type: manual` when you control versioning
+
+### Tag Naming Conventions
+
+- Keep stable channels simple: `latest`, `stable`, version numbers
+- Prefix experimental channels: `dev`, `beta`, `nightly`
+- Include identifiers for specificity: `dev-{{sha}}`, `{{version}}-vue`
+
+### Dockerfile Organization
+
+- **Same logic, different configs**: Use one Dockerfile with ARG parameters
+- **Different build processes**: Use separate Dockerfile.variant files
+- **Share common stages**: Use multi-stage builds to reduce duplication
+
+## Common Patterns
+
+<Tabs>
+  <Tab title="Stable + Dev">
+    ```json
+    "variants": {
+      "latest": {
+        "checkver": { "type": "tag" },
+        "docker": { "tags": ["type=raw,value=latest"] }
+      },
+      "dev": {
+        "checkver": { "type": "sha" },
+        "docker": { "tags": ["type=raw,value=dev"] }
+      }
+    }
+    ```
+    Best for: Applications with stable releases and active development
+  </Tab>
+  
+  <Tab title="Framework Variants">
+    ```json
+    "variants": {
+      "vue": {
+        "docker": { "tags": ["type=raw,value=vue"] }
+      },
+      "react": {
+        "docker": { "tags": ["type=raw,value=react"] }
+      },
+      "svelte": {
+        "docker": { "tags": ["type=raw,value=svelte"] }
+      }
+    }
+    ```
+    Best for: Base images that need framework-specific configurations
+  </Tab>
+  
+  <Tab title="Version Streams">
+    ```json
+    "variants": {
+      "v2": {
+        "version": "2.1.0",
+        "docker": { "tags": ["type=raw,value=2", "type=raw,value=2.1"] }
+      },
+      "v3": {
+        "version": "3.0.0",
+        "docker": { "tags": ["type=raw,value=3", "type=raw,value=latest"] }
+      }
+    }
+    ```
+    Best for: Maintaining multiple major versions in parallel
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build Scripts" icon="scroll" href="/examples/with-build-scripts">
+    Add pre-build and post-build automation
+  </Card>
+  <Card title="Variant Reference" icon="book" href="/concepts/variants">
+    Complete variant configuration reference
+  </Card>
+</CardGroup>

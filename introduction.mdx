@@ -1,0 +1,143 @@
+---
+title: Introduction
+description: A collection of Docker images for various applications, automatically built and published with version tracking and multi-variant support
+---
+
+# Apps Image
+
+A comprehensive collection of Docker images for popular open-source applications, featuring automated version tracking, multi-platform support, and streamlined deployment workflows.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running in minutes with pre-built Docker images
+  </Card>
+  <Card title="Add Applications" icon="plus" href="/guides/adding-applications">
+    Learn how to add new applications to the repository
+  </Card>
+  <Card title="Available Images" icon="images" href="https://hub.docker.com/u/aliuq" horizontal>
+    Browse the complete catalog of available Docker images
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/aliuq/apps-image" horizontal>
+    View the source code and contribute to the project
+  </Card>
+</CardGroup>
+
+## What is Apps Image?
+
+Apps Image is an automated Docker image repository that simplifies the process of containerizing and deploying open-source applications. Instead of manually building and maintaining Docker images for each application, Apps Image provides:
+
+- **Pre-built images** ready to deploy from Docker Hub
+- **Automatic version tracking** that monitors upstream repositories
+- **Multi-platform support** for both AMD64 and ARM64 architectures
+- **Variant management** for different configurations (latest, dev, tls, etc.)
+- **Automated builds** triggered by version changes
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Automated Version Tracking" icon="clock-rotate-left">
+    Automatically checks for new versions from upstream repositories every 2 hours using GitHub Actions
+  </Card>
+  <Card title="Multi-Platform Builds" icon="server">
+    Images built for both `linux/amd64` and `linux/arm64` platforms
+  </Card>
+  <Card title="Flexible Version Strategies" icon="code-branch">
+    Support for semantic versioning, commit SHA tracking, and manual version control
+  </Card>
+  <Card title="Custom Build Scripts" icon="file-code">
+    Pre and post build hooks for complex applications like Next.js apps
+  </Card>
+  <Card title="Multiple Registries" icon="docker">
+    Publish to Docker Hub, GitHub Container Registry, and Alibaba Cloud Registry
+  </Card>
+  <Card title="Variant Support" icon="layer-group">
+    Multiple image variants per application (e.g., nginx:latest, nginx:vue, nginx:svelte)
+  </Card>
+</CardGroup>
+
+## How It Works
+
+The Apps Image workflow consists of three main components:
+
+### 1. Application Configuration
+
+Each application is defined in its own directory with:
+
+- `meta.json` - Metadata and version tracking configuration
+- `Dockerfile` - Container build instructions with version placeholders
+- `README.md` - Documentation and usage examples
+- `pre.sh` / `post.sh` - Optional build hooks for complex scenarios
+
+### 2. Automated Version Checking
+
+A GitHub Action runs every 2 hours to:
+
+1. Check each application's upstream repository for new versions
+2. Compare with the current version in `meta.json`
+3. Create pull requests when updates are detected
+4. Trigger builds automatically
+
+### 3. Multi-Platform Builds
+
+When a new version is detected:
+
+1. Version placeholders in Dockerfiles are replaced with actual values
+2. Pre-build scripts execute (if present)
+3. Docker images are built for multiple platforms
+4. Images are tagged and pushed to registries
+5. Post-build scripts execute (if present)
+
+## Architecture Overview
+
+```
+apps-image/
+├── apps/              # Application-specific images
+│   ├── icones/        # Example: Icon explorer
+│   │   ├── Dockerfile
+│   │   ├── meta.json
+│   │   └── README.md
+│   ├── rayso/         # Example: Code screenshot tool
+│   │   ├── Dockerfile
+│   │   ├── meta.json
+│   │   ├── pre.sh     # Pre-build hook
+│   │   └── README.md
+│   └── ...
+├── base/              # Base images for reuse
+│   ├── nginx/         # Custom nginx with variants
+│   ├── alpine/        # Minimal base images
+│   └── ...
+├── action/            # GitHub Actions for automation
+│   ├── check-version/ # Version checking workflow
+│   └── resolve-meta/  # Metadata resolution
+└── .github/
+    └── workflows/     # CI/CD workflows
+        ├── check-version.yaml
+        └── build-image.yaml
+```
+
+## Use Cases
+
+Apps Image is perfect for:
+
+<CardGroup cols={1}>
+  <Card title="Self-Hosted Services" icon="home">
+    Deploy web applications like Icones, WeekToDo, or SrcBook on your own infrastructure
+  </Card>
+  <Card title="Development Environments" icon="laptop-code">
+    Quickly spin up containerized development tools and utilities
+  </Card>
+  <Card title="Always-Updated Images" icon="arrows-rotate">
+    Ensure you're running the latest versions without manual intervention
+  </Card>
+  <Card title="Custom Deployments" icon="gears">
+    Fork and customize for your own application collection
+  </Card>
+</CardGroup>
+
+## Getting Started
+
+Ready to use Apps Image? Check out our [Quick Start Guide](/quickstart) to start deploying applications in minutes, or learn how to [add your own applications](/guides/adding-applications) to the repository.
+
+<Tip>
+  All images are available on Docker Hub at [hub.docker.com/u/aliuq](https://hub.docker.com/u/aliuq)
+</Tip>

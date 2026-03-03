@@ -1,0 +1,438 @@
+---
+title: Placeholders
+description: Template variable system for dynamic configuration
+---
+
+Placeholders are template variables that get replaced with actual values during image builds. They enable dynamic configuration based on the current version and metadata.
+
+## Overview
+
+Placeholders use the `{{placeholder}}` syntax and are replaced during the metadata resolution phase. They're commonly used in:
+
+- Docker image tags
+- Image names
+- Build arguments
+- Labels
+
+## Available Placeholders
+
+### Version Placeholders
+
+<ParamField path="{{version}}" type="string">
+  Full version from the variant configuration.
+
+  **Example**: `11.3`, `0.4.2`, `abc1234`
+
+  ```json
+  "tags": ["type=raw,value={{version}}"]
+  ```
+
+  Results in: `11.3`, `0.4.2`, etc.
+</ParamField>
+
+<ParamField path="{{major}}" type="string">
+  Major version number (semver).
+
+  **Example**: `11.3.5` → `11`
+
+  ```json
+  "tags": ["type=raw,value={{major}}"]
+  ```
+
+  <Note>
+  Only available for versions with valid semver format (e.g., `1.2.3`). Not available for SHA-based versions.
+  </Note>
+</ParamField>
+
+<ParamField path="{{minor}}" type="string">
+  Minor version number (semver).
+
+  **Example**: `11.3.5` → `3`
+
+  ```json
+  "tags": ["type=raw,value={{major}}.{{minor}}"]
+  ```
+</ParamField>
+
+<ParamField path="{{patch}}" type="string">
+  Patch version number (semver).
+
+  **Example**: `11.3.5` → `5`
+
+  ```json
+  "tags": ["type=raw,value={{major}}.{{minor}}.{{patch}}"]
+  ```
+</ParamField>
+
+### Commit Placeholders
+
+<ParamField path="{{sha}}" type="string">
+  Short commit SHA (7 characters).
+
+  **Example**: `e4b5388`
+
+  ```json
+  "tags": ["type=raw,value=dev-{{sha}}"]
+  ```
+
+  Results in: `dev-e4b5388`
+</ParamField>
+
+<ParamField path="{{fullSha}}" type="string">
+  Full commit SHA (40 characters).
+
+  **Example**: `e4b53880af4026b8be6a870ae7d8133f744a6181`
+
+  ```json
+  "buildArgs": {
+    "COMMIT": "{{fullSha}}"
+  }
+  ```
+</ParamField>
+
+### App Metadata
+
+<ParamField path="{{name}}" type="string">
+  App name from `meta.json`.
+
+  **Example**: `cobalt`, `icones`
+
+  ```json
+  "images": ["myuser/{{name}}"]
+  ```
+
+  Results in: `myuser/cobalt`
+</ParamField>
+
+## Usage Examples
+
+### Docker Tags
+
+<CodeGroup>
+```json Semantic versioning
+{
+  "docker": {
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}",
+      "type=raw,value={{major}}.{{minor}}",
+      "type=raw,value={{major}}"
+    ]
+  }
+}
+```
+
+```json SHA-based tags
+{
+  "docker": {
+    "tags": [
+      "type=raw,value=dev",
+      "type=raw,value=dev-{{sha}}",
+      "type=raw,value={{version}}"
+    ]
+  }
+}
+```
+
+```json Mixed tags
+{
+  "docker": {
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}",
+      "type=raw,value=commit-{{sha}}"
+    ]
+  }
+}
+```
+</CodeGroup>
+
+### Image Names
+
+```json
+{
+  "docker": {
+    "images": [
+      "dockerhub-user/{{name}}",
+      "ghcr.io/github-org/{{name}}",
+      "registry.example.com/{{name}}"
+    ]
+  }
+}
+```
+
+For app name `cobalt`, this generates:
+- `dockerhub-user/cobalt`
+- `ghcr.io/github-org/cobalt`
+- `registry.example.com/cobalt`
+
+### Build Arguments
+
+```json
+{
+  "docker": {
+    "buildArgs": {
+      "VERSION": "{{version}}",
+      "COMMIT_SHA": "{{fullSha}}",
+      "RELEASE_TAG": "v{{major}}.{{minor}}"
+    }
+  }
+}
+```
+
+Use in Dockerfile:
+```dockerfile
+ARG VERSION
+ARG COMMIT_SHA
+ARG RELEASE_TAG
+
+LABEL version="${VERSION}" \
+      commit="${COMMIT_SHA}" \
+      release="${RELEASE_TAG}"
+
+RUN echo "Building version ${VERSION} from ${COMMIT_SHA}"
+```
+
+### Labels
+
+```json
+{
+  "docker": {
+    "labels": {
+      "app.version": "{{version}}",
+      "app.commit": "{{sha}}",
+      "app.name": "{{name}}"
+    }
+  }
+}
+```
+
+## Complete Examples
+
+### Stable Release with Semver
+
+```json apps/cobalt/meta.json
+{
+  "name": "cobalt",
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "sha": "e4b53880af4026b8be6a870ae7d8133f744a6181",
+      "checkver": {
+        "type": "version",
+        "repo": "imputnet/cobalt",
+        "file": "web/package.json"
+      },
+      "docker": {
+        "images": [
+          "myuser/{{name}}"
+        ],
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Generated tags**:
+- `myuser/cobalt:latest`
+- `myuser/cobalt:11.3`
+- `myuser/cobalt:11`
+
+### Development Build with SHA
+
+```json apps/cobalt/meta.json
+{
+  "name": "cobalt",
+  "variants": {
+    "dev": {
+      "version": "8d9bccc",
+      "sha": "8d9bccc4fedabb6842fab71bd14e805f1ea21336",
+      "checkver": {
+        "type": "sha",
+        "repo": "imputnet/cobalt",
+        "path": "web"
+      },
+      "docker": {
+        "images": [
+          "myuser/{{name}}"
+        ],
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Generated tags**:
+- `myuser/cobalt:dev`
+- `myuser/cobalt:dev-8d9bccc`
+
+### Multi-Registry with Full Metadata
+
+```json apps/myapp/meta.json
+{
+  "name": "myapp",
+  "title": "My Application",
+  "description": "An amazing application",
+  "variants": {
+    "latest": {
+      "version": "2.5.3",
+      "sha": "abc123def456",
+      "checkver": {
+        "type": "tag",
+        "repo": "owner/repo"
+      },
+      "docker": {
+        "images": [
+          "docker.io/user/{{name}}",
+          "ghcr.io/user/{{name}}"
+        ],
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}.{{minor}}",
+          "type=raw,value={{major}}"
+        ],
+        "buildArgs": {
+          "APP_VERSION": "{{version}}",
+          "GIT_COMMIT": "{{fullSha}}"
+        },
+        "labels": {
+          "version": "{{version}}",
+          "commit": "{{sha}}"
+        }
+      }
+    }
+  }
+}
+```
+
+**Generated configuration**:
+
+**Images and tags**:
+- `docker.io/user/myapp:latest`
+- `docker.io/user/myapp:2.5.3`
+- `docker.io/user/myapp:2.5`
+- `docker.io/user/myapp:2`
+- `ghcr.io/user/myapp:latest`
+- `ghcr.io/user/myapp:2.5.3`
+- `ghcr.io/user/myapp:2.5`
+- `ghcr.io/user/myapp:2`
+
+**Build args**:
+- `APP_VERSION=2.5.3`
+- `GIT_COMMIT=abc123def456`
+
+**Labels**:
+- `version=2.5.3`
+- `commit=abc123d`
+
+## Placeholder Resolution
+
+Placeholders are resolved in this order:
+
+1. **App metadata** (`{{name}}`) - from `meta.json`
+2. **Version info** (`{{version}}`, `{{sha}}`, `{{fullSha}}`) - from variant config
+3. **Semver parts** (`{{major}}`, `{{minor}}`, `{{patch}}`) - parsed from version
+
+### Version Parsing
+
+Version strings are parsed with loose semver matching:
+
+```javascript
+"11.3"     → { major: "11", minor: "3",  patch: "0" }
+"2.5.7"    → { major: "2",  minor: "5",  patch: "7" }
+"v1.0.0"   → { major: "1",  minor: "0",  patch: "0" }
+"abc123"   → { major: undefined, minor: undefined, patch: undefined }
+```
+
+<Note>
+SHA-based versions (like `abc123`) don't have semver parts, so `{{major}}`, `{{minor}}`, and `{{patch}}` will be empty.
+</Note>
+
+## Alternative Syntax
+
+Placeholders support multiple bracket styles:
+
+- `{{placeholder}}` - Recommended (double curly braces)
+- `{placeholder}` - Single curly braces
+- `$placeholder$` - Dollar signs
+
+All three are equivalent:
+```json
+"tags": [
+  "type=raw,value={{version}}",
+  "type=raw,value={version}",
+  "type=raw,value=$version$"
+]
+```
+
+<Warning>
+For consistency, stick to the `{{placeholder}}` syntax throughout your configuration.
+</Warning>
+
+## Escaping Placeholders
+
+To use literal placeholder text without replacement, escape with backslashes:
+
+```json
+"tags": [
+  "type=raw,value=\\{\\{version\\}\\}"
+]
+```
+
+Results in literal tag: `{{version}}`
+
+## Best Practices
+
+1. **Use semantic versioning when possible**:
+   ```json
+   "tags": [
+     "type=raw,value={{major}}.{{minor}}.{{patch}}",
+     "type=raw,value={{major}}.{{minor}}",
+     "type=raw,value={{major}}"
+   ]
+   ```
+
+2. **Include SHA for development builds**:
+   ```json
+   "tags": [
+     "type=raw,value=dev-{{sha}}",
+     "type=raw,value={{version}}"
+   ]
+   ```
+
+3. **Use descriptive build arguments**:
+   ```json
+   "buildArgs": {
+     "VERSION": "{{version}}",
+     "BUILD_COMMIT": "{{fullSha}}"
+   }
+   ```
+
+4. **Add version labels**:
+   ```json
+   "labels": {
+     "version": "{{version}}",
+     "commit": "{{sha}}"
+   }
+   ```
+
+5. **Keep image names simple**:
+   ```json
+   "images": ["user/{{name}}"]
+   ```
+
+## Related
+
+- [Docker Configuration](/api/docker-config) - Docker build options
+- [Meta Schema](/api/meta-schema) - Complete configuration reference
+- [Checkver Types](/api/checkver-types) - Version checking strategies

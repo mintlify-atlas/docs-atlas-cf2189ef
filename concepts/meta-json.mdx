@@ -1,0 +1,835 @@
+---
+title: meta.json File Structure
+description: Complete reference for the meta.json configuration file that defines application metadata and build settings
+---
+
+The `meta.json` file is the central configuration for each application in Apps Image. It defines how the application is tracked, versioned, and built into Docker images.
+
+## File Location
+
+Each application has its own `meta.json` in its directory:
+
+```
+apps/icones/meta.json
+apps/rayso/meta.json
+base/nginx/meta.json
+```
+
+## Basic Structure
+
+Every `meta.json` follows this TypeScript interface (from action/src/types/schema.ts:115-136):
+
+```typescript
+interface Meta {
+  name: string                              // Required
+  type: 'app' | 'base' | 'sync'            // Required
+  title?: string
+  slogan?: string
+  description?: string
+  license?: string
+  context?: string
+  readme?: string | boolean
+  variants: Record<string, ImageVariant>    // Required
+  skip?: boolean
+}
+```
+
+## Core Fields
+
+### name
+
+**Required** | Type: `string`
+
+Application identifier used as the default Docker image name.
+
+```json
+{
+  "name": "icones"
+}
+```
+
+Images will be published to:
+- `aliuq/icones`
+- `ghcr.io/aliuq/icones`
+
+### type
+
+**Required** | Type: `'app' | 'base' | 'sync'`
+
+Defines the image category:
+
+- **`app`**: End-user applications (icones, rayso, lsky)
+- **`base`**: Base images used by other images (nginx)
+- **`sync`**: Mirror images from other registries
+
+```json
+{
+  "type": "app"
+}
+```
+
+### title
+
+**Optional** | Type: `string`
+
+Human-readable display name for the application.
+
+```json
+// apps/icones/meta.json
+{
+  "name": "icones",
+  "title": "Icones"
+}
+```
+
+### slogan
+
+**Optional** | Type: `string`
+
+Brief tagline displayed in the catalog.
+
+```json
+// apps/icones/meta.json
+{
+  "slogan": "开源图标浏览器，搜索浏览 150,000+ 图标"
+}
+```
+
+### description
+
+**Optional** | Type: `string`
+
+Detailed description of the application. Used in Docker image labels.
+
+```json
+// apps/icones/meta.json
+{
+  "description": "Icon Explorer with Instant searching, powered by Iconify"
+}
+```
+
+### license
+
+**Optional** | Type: `string`
+
+SPDX license identifier. Included in Docker image labels.
+
+```json
+{
+  "license": "MIT"
+}
+```
+
+Common values: `MIT`, `Apache-2.0`, `GPL-3.0`, `AGPL-3.0`
+
+### skip
+
+**Optional** | Type: `boolean` | Default: `false`
+
+If `true`, the application will be excluded from version checks and builds.
+
+```json
+{
+  "skip": true
+}
+```
+
+## Variants Configuration
+
+**Required** | Type: `Record<string, ImageVariant>`
+
+Defines one or more image variants. Each variant can track different versions or configurations.
+
+### ImageVariant Structure
+
+```typescript
+// action/src/types/schema.ts:98-110
+interface ImageVariant {
+  version?: string
+  sha?: string
+  enabled?: boolean
+  checkver: VersionCheck       // Required
+  docker?: DockerConfig
+}
+```
+
+### Single Variant Example
+
+```json
+// apps/icones/meta.json
+{
+  "name": "icones",
+  "type": "app",
+  "variants": {
+    "latest": {
+      "version": "0bc5918",
+      "sha": "0bc59182623617a9238023c183a72863c0ebdfca",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/antfu-collective/icones"
+      }
+    }
+  }
+}
+```
+
+### Multi-Variant Example
+
+```json
+// apps/lsky/meta.json
+{
+  "name": "lsky",
+  "type": "app",
+  "variants": {
+    "latest": {
+      "version": "2.1",
+      "sha": "923f567e0a93c7291c4c9fc5279da9847ed39f7e",
+      "checkver": {
+        "type": "tag",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "38d52c4",
+      "sha": "38d52c4609eb85236b45ac75acac2ced55174953",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+<Note>
+Each variant requires its own Dockerfile:
+- `latest` → `Dockerfile`
+- `dev` → `Dockerfile.dev`
+- `tls` → `Dockerfile.tls`
+</Note>
+
+## Version Check Configuration
+
+### VersionCheck Structure
+
+```typescript
+// action/src/types/schema.ts:71-94
+interface VersionCheck {
+  type: 'version' | 'sha' | 'tag' | 'manual' | 'registry'  // Required
+  repo?: string
+  branch?: string
+  file?: string
+  path?: string
+  regex?: string
+  tagPattern?: string
+  targetVersion?: string
+  processFiles?: string[]
+  checkFrequency?: 'always' | 'daily' | 'weekly' | 'manual'
+  lastCheck?: string
+}
+```
+
+### Check Type: version
+
+Tracks version from a file (typically package.json).
+
+```json
+// apps/srcbook/meta.json
+{
+  "checkver": {
+    "type": "version",
+    "repo": "https://github.com/srcbookdev/srcbook",
+    "file": "srcbook/package.json"
+  }
+}
+```
+
+**With Custom Regex**:
+
+```json
+{
+  "checkver": {
+    "type": "version",
+    "repo": "owner/repo",
+    "file": "VERSION",
+    "regex": "v([0-9.]+)"
+  }
+}
+```
+
+<Info>
+When `file` is `package.json`, the system automatically reads the `version` field. For other files, use `regex` to extract the version.
+</Info>
+
+### Check Type: sha
+
+Tracks the latest commit SHA from a repository.
+
+**Full Repository**:
+
+```json
+// apps/icones/meta.json
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "https://github.com/antfu-collective/icones"
+  }
+}
+```
+
+**Specific Path**:
+
+```json
+// apps/cobalt/meta.json (dev variant)
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "https://github.com/imputnet/cobalt",
+    "path": "web"
+  }
+}
+```
+
+**With Branch**:
+
+```json
+// apps/weserv/meta.json
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "weserv/images",
+    "branch": "5.x"
+  }
+}
+```
+
+<Tip>
+Repository URLs can be full (`https://github.com/owner/repo`) or shorthand (`owner/repo`). The system automatically converts shorthand to full URLs.
+</Tip>
+
+### Check Type: tag
+
+Tracks Git tags, automatically finding the latest semver tag.
+
+**Basic Tag Tracking**:
+
+```json
+// apps/lsky/meta.json
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "https://github.com/lsky-org/lsky-pro"
+  }
+}
+```
+
+The system finds the latest valid semver tag (e.g., `v2.1`, `2.1.0`).
+
+**With Pattern Matching**:
+
+```json
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "owner/repo",
+    "tagPattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+  }
+}
+```
+
+### Check Type: manual
+
+No automatic version checking. Requires manual updates to meta.json.
+
+```json
+// base/nginx/meta.json
+{
+  "checkver": {
+    "type": "manual"
+  }
+}
+```
+
+Use this for:
+- Base images that don't track upstream
+- Images with custom versioning schemes
+- Images requiring manual testing before updates
+
+## Docker Configuration
+
+### DockerConfig Structure
+
+```typescript
+// action/src/types/schema.ts:43-66
+interface DockerConfig {
+  file?: string
+  images?: string[]
+  tags?: string[]
+  platforms?: Platform[]
+  labels?: Record<string, string>
+  buildArgs?: Record<string, string>
+  secrets?: string[]
+  outputs?: string[]
+  cache?: CacheConfig
+  push?: boolean
+  load?: boolean
+}
+```
+
+### file
+
+**Optional** | Type: `string` | Default: Auto-detected
+
+Dockerfile path relative to the application directory.
+
+**Default behavior**:
+- `latest` variant → `Dockerfile`
+- Other variants → `Dockerfile.{variantName}`
+
+```json
+{
+  "docker": {
+    "file": "Dockerfile.custom"
+  }
+}
+```
+
+### images
+
+**Optional** | Type: `string[]` | Default: Auto-generated
+
+Docker image names to publish. Supports `{{name}}` placeholder.
+
+**Default** (from environment variables):
+
+```json
+[
+  "aliuq/{{name}}",
+  "ghcr.io/aliuq/{{name}}",
+  "registry.cn-hangzhou.aliyuncs.com/aliuq/{{name}}"
+]
+```
+
+**Custom Example**:
+
+```json
+{
+  "docker": {
+    "images": [
+      "myuser/{{name}}",
+      "ghcr.io/myuser/{{name}}"
+    ]
+  }
+}
+```
+
+### tags
+
+**Optional** | Type: `string[]` | Default: Variant-based
+
+Image tags using [docker/metadata-action](https://github.com/docker/metadata-action) format.
+
+**Default for `latest` variant**:
+
+```json
+[
+  "type=raw,value=latest",
+  "type=raw,value={{version}}"
+]
+```
+
+**Available Placeholders**:
+
+- `{{version}}` - Full version string (e.g., `2.1`, `0bc5918`)
+- `{{sha}}` - Short SHA (7 characters)
+- `{{fullSha}}` - Full SHA (40 characters)
+- `{{major}}` - Major version (e.g., `2` from `2.1.0`)
+- `{{minor}}` - Minor version (e.g., `2.1` from `2.1.0`)
+- `{{patch}}` - Patch version (e.g., `2.1.0`)
+
+**Multi-Tag Example**:
+
+```json
+// apps/cobalt/meta.json (latest variant)
+{
+  "docker": {
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}",
+      "type=raw,value={{major}}"
+    ]
+  }
+}
+```
+
+This creates tags: `latest`, `11.3`, `11`
+
+**Dev Variant Example**:
+
+```json
+// apps/lsky/meta.json (dev variant)
+{
+  "docker": {
+    "tags": [
+      "type=raw,value=dev",
+      "type=raw,value=dev-{{sha}}"
+    ]
+  }
+}
+```
+
+This creates tags: `dev`, `dev-38d52c4`
+
+### platforms
+
+**Optional** | Type: `Platform[]` | Default: `["linux/amd64", "linux/arm64"]`
+
+Target platforms for multi-architecture builds.
+
+```typescript
+type Platform =
+  | 'linux/amd64'
+  | 'linux/arm64'
+  | 'linux/arm/v7'
+  | 'linux/arm/v6'
+  | 'linux/386'
+  | 'linux/ppc64le'
+  | 'linux/s390x'
+```
+
+**Example**:
+
+```json
+{
+  "docker": {
+    "platforms": ["linux/amd64", "linux/arm64", "linux/arm/v7"]
+  }
+}
+```
+
+### buildArgs
+
+**Optional** | Type: `Record<string, string>`
+
+Docker build arguments passed to the build.
+
+```json
+{
+  "docker": {
+    "buildArgs": {
+      "NODE_VERSION": "20",
+      "BUILD_ENV": "production"
+    }
+  }
+}
+```
+
+Used in Dockerfile:
+
+```dockerfile
+ARG NODE_VERSION=18
+FROM node:${NODE_VERSION}-alpine
+
+ARG BUILD_ENV
+ENV NODE_ENV=${BUILD_ENV}
+```
+
+### labels
+
+**Optional** | Type: `Record<string, string>`
+
+Custom Docker image labels. System labels are auto-generated:
+
+**Auto-generated labels** (action/src/context/metaAppContext.ts:143-151):
+
+- `description` - From meta.description
+- `licenses` - From meta.license
+- `revision` - Current SHA
+- `source` - Repository URL
+- `title` - From meta.title or meta.name
+- `url` - Repository or project URL
+- `version` - Current version
+
+**Custom labels**:
+
+```json
+{
+  "docker": {
+    "labels": {
+      "org.opencontainers.image.authors": "maintainer@example.com",
+      "com.example.custom": "value"
+    }
+  }
+}
+```
+
+## Complete Examples
+
+### Simple Application
+
+```json
+// apps/icones/meta.json
+{
+  "name": "icones",
+  "type": "app",
+  "title": "Icones",
+  "slogan": "开源图标浏览器，搜索浏览 150,000+ 图标",
+  "description": "Icon Explorer with Instant searching, powered by Iconify",
+  "license": "MIT",
+  "variants": {
+    "latest": {
+      "version": "0bc5918",
+      "sha": "0bc59182623617a9238023c183a72863c0ebdfca",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/antfu-collective/icones"
+      }
+    }
+  }
+}
+```
+
+### Multi-Variant Application
+
+```json
+// apps/lsky/meta.json
+{
+  "name": "lsky",
+  "type": "app",
+  "title": "兰空图床",
+  "slogan": "兰空图床，轻量级图片云存储系统",
+  "description": "兰空图床(Lsky Pro) - Your photo album on the cloud.",
+  "license": "GPL-3.0",
+  "variants": {
+    "latest": {
+      "version": "2.1",
+      "sha": "923f567e0a93c7291c4c9fc5279da9847ed39f7e",
+      "checkver": {
+        "type": "tag",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "38d52c4",
+      "sha": "38d52c4609eb85236b45ac75acac2ced55174953",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Multiple Platform Variants
+
+```json
+// apps/weserv/meta.json
+{
+  "name": "weserv",
+  "type": "app",
+  "slogan": "wsrv.nl",
+  "description": "weserv 是一个用于快速生成图像的 API",
+  "variants": {
+    "latest": {
+      "version": "0f029b4",
+      "sha": "0f029b475c0ace517205ff88a967449aea0b2c41",
+      "checkver": {
+        "type": "sha",
+        "repo": "weserv/images",
+        "branch": "5.x"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value=5.x",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "alpine": {
+      "version": "0f029b4",
+      "sha": "0f029b475c0ace517205ff88a967449aea0b2c41",
+      "checkver": {
+        "type": "sha",
+        "repo": "weserv/images",
+        "branch": "5.x"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=alpine",
+          "type=raw,value=5.x-alpine",
+          "type=raw,value={{version}}-alpine"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Base Image
+
+```json
+// base/nginx/meta.json
+{
+  "name": "nginx",
+  "type": "base",
+  "description": "Nginx with custom configuration, based on alpine. The root path is /app.",
+  "variants": {
+    "latest": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "vue": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=vue",
+          "type=raw,value={{version}}-vue"
+        ]
+      }
+    },
+    "svelte": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=svelte",
+          "type=raw,value={{version}}-svelte"
+        ]
+      }
+    }
+  }
+}
+```
+
+## Validation
+
+The meta.json file is validated against a JSON Schema located at `.vscode/meta.schema.json`.
+
+**VSCode Integration**: Add to `.vscode/settings.json`:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["**/apps/*/meta.json", "**/base/*/meta.json"],
+      "url": "./.vscode/meta.schema.json"
+    }
+  ]
+}
+```
+
+This provides:
+- Auto-completion for meta.json fields
+- Real-time validation
+- Inline documentation
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Semantic Versioning for Tags">
+    When using `type: "tag"`, ensure upstream repository uses semver tags:
+    
+    ```json
+    {
+      "checkver": {
+        "type": "tag",
+        "repo": "owner/repo",
+        "tagPattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Separate Stable and Dev Variants">
+    Track stable releases and development separately:
+    
+    ```json
+    {
+      "variants": {
+        "latest": {
+          "checkver": { "type": "tag" }
+        },
+        "dev": {
+          "checkver": { "type": "sha" }
+        }
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use Path Tracking for Monorepos">
+    For monorepo applications, track specific paths:
+    
+    ```json
+    {
+      "checkver": {
+        "type": "sha",
+        "repo": "owner/monorepo",
+        "path": "packages/web"
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Provide Comprehensive Metadata">
+    Include all optional fields for better documentation:
+    
+    ```json
+    {
+      "name": "myapp",
+      "title": "My Application",
+      "slogan": "Short tagline",
+      "description": "Detailed description",
+      "license": "MIT"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Variants](/concepts/variants) - Understanding multi-variant image support
+- [Version Checking](/concepts/version-checking) - How automatic version detection works
+- [Architecture](/concepts/architecture) - Overall system architecture

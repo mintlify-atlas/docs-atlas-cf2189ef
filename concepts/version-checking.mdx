@@ -1,0 +1,902 @@
+---
+title: Automatic Version Checking
+description: How Apps Image automatically detects and tracks upstream version changes
+---
+
+Apps Image automatically monitors upstream repositories and detects when new versions are available. When changes are detected, it creates pull requests with updated `meta.json` files, which trigger automated Docker image builds.
+
+## Overview
+
+The version checking system runs every 2 hours via GitHub Actions and performs these steps:
+
+1. **Scan** - Find all applications to check
+2. **Clone** - Clone or update upstream repositories
+3. **Check** - Detect version changes using configured strategy
+4. **Compare** - Compare with current version in meta.json
+5. **Update** - Create PR with version updates if changes detected
+
+## Check Workflow
+
+The main workflow is orchestrated in `action/src/check.ts`:
+
+```typescript
+async function main() {
+  // 1. Initialize application manager
+  const appsManager = new CheckAppsManager()
+  
+  // 2. Scan applications
+  const appPaths = await appsManager.scanApps()
+  if (!appPaths?.length) {
+    logger.warn('No applications found to process')
+    return
+  }
+  
+  // 3. Load application contexts
+  await appsManager.loadApps(appPaths)
+  
+  // 4. Execute version checks
+  const { allApps, outdatedApps } = await appsManager.checkAllVersions()
+  
+  if (!outdatedApps?.size) {
+    logger.info('All apps are up to date, no updates needed')
+    return
+  }
+  
+  // 5. Build PR data
+  const prResults = await appsManager.buildPrDatas(outdatedApps)
+  
+  // 6. Create pull requests
+  await appsManager.createPr(prResults)
+}
+```
+
+## Version Check Types
+
+Apps Image supports five version check strategies, each suited for different upstream patterns.
+
+### Type: version
+
+Extract version from a file in the upstream repository, typically `package.json`.
+
+**Configuration**:
+
+```json
+{
+  "checkver": {
+    "type": "version",
+    "repo": "https://github.com/srcbookdev/srcbook",
+    "file": "srcbook/package.json"
+  }
+}
+```
+
+**How it works** (action/src/variant.ts:248-286):
+
+1. Clones the upstream repository
+2. Reads the specified file
+3. For `package.json`, extracts the `version` field
+4. For other files, uses regex to extract version
+5. Validates as semver and removes `v` prefix
+6. Gets the commit SHA for the file
+
+**Example**: `srcbook` tracks version from `srcbook/package.json`
+
+```json
+// apps/srcbook/meta.json
+{
+  "name": "srcbook",
+  "variants": {
+    "latest": {
+      "version": "0.0.19",
+      "sha": "0ba24b1ea83b0dd20137236ce9aebc3ff86bff37",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/srcbookdev/srcbook",
+        "file": "srcbook/package.json"
+      }
+    }
+  }
+}
+```
+
+**With Custom Regex**:
+
+```json
+{
+  "checkver": {
+    "type": "version",
+    "repo": "owner/repo",
+    "file": "VERSION.txt",
+    "regex": "v([0-9.]+)"
+  }
+}
+```
+
+<Info>
+When tracking `package.json`, the `version` field is automatically extracted. For other files, provide a `regex` with a capture group.
+</Info>
+
+### Type: sha
+
+Track the latest commit SHA from a repository or specific path.
+
+**Configuration**:
+
+```json
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "https://github.com/antfu-collective/icones"
+  }
+}
+```
+
+**How it works** (action/src/variant.ts:220-243):
+
+1. Clones the upstream repository
+2. If `targetVersion` specified, gets that specific SHA
+3. If `path` specified, gets latest commit affecting that path
+4. Otherwise, gets latest commit SHA
+5. Returns short SHA (7 chars) as version
+
+**Example 1**: Full repository tracking
+
+```json
+// apps/icones/meta.json
+{
+  "variants": {
+    "latest": {
+      "version": "0bc5918",
+      "sha": "0bc59182623617a9238023c183a72863c0ebdfca",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/antfu-collective/icones"
+      }
+    }
+  }
+}
+```
+
+**Example 2**: Path-specific tracking (for monorepos)
+
+```json
+// apps/cobalt/meta.json (dev variant)
+{
+  "variants": {
+    "dev": {
+      "version": "8d9bccc",
+      "sha": "8d9bccc4fedabb6842fab71bd14e805f1ea21336",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/imputnet/cobalt",
+        "path": "web"
+      }
+    }
+  }
+}
+```
+
+**Example 3**: Branch tracking
+
+```json
+// apps/weserv/meta.json
+{
+  "variants": {
+    "latest": {
+      "version": "0f029b4",
+      "sha": "0f029b475c0ace517205ff88a967449aea0b2c41",
+      "checkver": {
+        "type": "sha",
+        "repo": "weserv/images",
+        "branch": "5.x"
+      }
+    }
+  }
+}
+```
+
+<Tip>
+Use `path` to track changes in specific directories of monorepos, ensuring builds only trigger when relevant code changes.
+</Tip>
+
+### Type: tag
+
+Track Git tags, automatically finding the latest valid semver tag.
+
+**Configuration**:
+
+```json
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "https://github.com/lsky-org/lsky-pro"
+  }
+}
+```
+
+**How it works** (action/src/variant.ts:170-215):
+
+1. Clones the upstream repository
+2. Gets all Git tags
+3. If `targetVersion` specified, uses that tag
+4. If `tagPattern` specified, finds first matching tag
+5. Otherwise, finds first valid semver tag
+6. Returns tag (without `v` prefix) and its commit SHA
+
+**Example 1**: Auto semver detection
+
+```json
+// apps/lsky/meta.json
+{
+  "variants": {
+    "latest": {
+      "version": "2.1",
+      "sha": "923f567e0a93c7291c4c9fc5279da9847ed39f7e",
+      "checkver": {
+        "type": "tag",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      }
+    }
+  }
+}
+```
+
+Automatically finds tags like `v2.1`, `2.1.0`, `v2.0.1`.
+
+**Example 2**: Pattern matching
+
+```json
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "owner/repo",
+    "tagPattern": "^release-[0-9]+\\.[0-9]+\\.[0-9]+$"
+  }
+}
+```
+
+Matches tags like `release-1.2.3`, `release-2.0.0`.
+
+**Example 3**: Target specific tag
+
+```json
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "owner/repo",
+    "targetVersion": "v2.0.0"
+  }
+}
+```
+
+<Warning>
+When using `tagPattern`, ensure the regex is properly escaped in JSON. Use double backslashes (`\\`) for special characters.
+</Warning>
+
+### Type: manual
+
+No automatic version checking. Versions must be manually updated in `meta.json`.
+
+**Configuration**:
+
+```json
+{
+  "checkver": {
+    "type": "manual"
+  }
+}
+```
+
+**How it works** (action/src/variant.ts:296-317):
+
+1. Reads previous meta.json from git history
+2. Compares current version with previous version
+3. If version changed, updates SHA to current commit
+4. No external repository cloning
+
+**Example**: Base images
+
+```json
+// base/nginx/meta.json
+{
+  "variants": {
+    "latest": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      }
+    }
+  }
+}
+```
+
+**Use cases**:
+- Base images that don't track upstream
+- Custom-built images
+- Images requiring manual testing before updates
+
+<Note>
+With `manual` type, you manually edit the `version` field in meta.json. The system detects the change and updates the `sha` automatically.
+</Note>
+
+### Type: registry
+
+**Future Feature** - Track versions from Docker registries.
+
+```json
+{
+  "checkver": {
+    "type": "registry",
+    "registry": "docker.io",
+    "image": "library/nginx"
+  }
+}
+```
+
+<Info>
+Registry type is defined in the schema but not yet implemented. It will enable mirroring images from other registries.
+</Info>
+
+## Version Detection Logic
+
+The `VariantContext` class handles version detection (action/src/variant.ts:21-407):
+
+```typescript
+export class VariantContext {
+  constructor(
+    public readonly context: string,
+    public readonly name: string,
+    public readonly variant: ImageVariant,
+  ) {
+    // Normalize repository URL
+    if (variant?.checkver?.repo) {
+      variant.checkver.repo = this.detectRepo(variant.checkver.repo)
+    }
+  }
+  
+  public async check() {
+    const { version, sha, checkver } = this.variant
+    
+    // Clone or update repository
+    const repoPath = await this.git.cloneOrUpdateRepo(
+      checkver.repo,
+      { branch: checkver.branch, targetVersion: checkver.targetVersion }
+    )
+    
+    // Check version by type
+    const result = await this.checkVersionByType(repoPath)
+    
+    // Compare with current version
+    const needsUpdate = version !== result.version || sha !== result.sha
+    
+    if (needsUpdate) {
+      // Collect commit info for PR
+      const commitInfo = await this.git.collectCommitInfo(
+        repoPath,
+        result.sha,
+        sha
+      )
+    }
+    
+    return { ...result, needsUpdate, commitInfo }
+  }
+}
+```
+
+## Repository Management
+
+The Git class efficiently manages upstream repositories (action/src/git.ts:20-407):
+
+### Clone and Cache Strategy
+
+```typescript
+public async cloneOrUpdateRepo(repoUrl: string, options: CloneOptions) {
+  const repoPath = path.join(this.cacheDir, repoName)
+  
+  if (await pathExists(repoPath)) {
+    // Repository exists, update it
+    await this.exec('git fetch --all --tags', { cwd: repoPath })
+    
+    if (options.branch) {
+      await this.exec(`git checkout ${options.branch}`, { cwd: repoPath })
+      await this.exec(`git pull origin ${options.branch}`, { cwd: repoPath })
+    }
+  } else {
+    // Clone new repository
+    await this.exec(`git clone ${repoUrl} ${repoPath}`)
+  }
+  
+  return repoPath
+}
+```
+
+**GitHub Actions Cache**:
+
+```yaml
+- name: Cache Git repositories
+  uses: actions/cache@v4
+  with:
+    path: .git-cache
+    key: git-repos-${{ hashFiles('**/meta.json') }}
+    restore-keys: |
+      git-repos-
+```
+
+Repositories are cached between runs, reducing clone time and bandwidth.
+
+### Error Recovery
+
+The system handles common Git issues:
+
+**Detached HEAD Recovery** (action/src/git.ts:106-113):
+
+```typescript
+try {
+  await this.exec('git pull', { cwd: repoPath })
+} catch (error) {
+  logger.debug('Git pull failed, possibly detached HEAD')
+  await this.exec(`rm -rf ${repoPath}`)
+  await this.cloneRepo(repoUrl, repoPath, options)
+}
+```
+
+**Shallow to Full Clone** (action/src/git.ts:130-140):
+
+```typescript
+public async unshallow(repoPath: string) {
+  try {
+    const { stdout: isShallow } = await this.exec(
+      'git rev-parse --is-shallow-repository',
+      { cwd: repoPath }
+    )
+    
+    if (isShallow === 'true') {
+      await this.exec('git fetch --unshallow', { cwd: repoPath })
+    }
+  } catch (error) {
+    // Already a full clone, ignore error
+  }
+}
+```
+
+## Pull Request Creation
+
+When updates are detected, the system creates pull requests with detailed information.
+
+### PR Title Format
+
+```
+update(apps/icones): update latest version to 0bc5918
+```
+
+For multiple variants:
+
+```
+update(apps/lsky): update latest version to 2.1, update dev version to 38d52c4
+```
+
+### PR Body Content
+
+The PR body includes (action/src/context/checkAppContext.ts:83-195):
+
+1. **Summary table** with version changes
+2. **Commit information** from upstream
+3. **Changed files** list
+4. **Metadata** about the update
+
+**Example PR Body**:
+
+```markdown
+## Version Updates
+
+| Variant | Current | New | Status |
+|---------|---------|-----|--------|
+| latest | 2.0 | 2.1 | ✅ Update available |
+| dev | 35a1b2c | 38d52c4 | ✅ Update available |
+
+## Commits (latest)
+
+### 923f567e (2024-03-01)
+
+**Author**: maintainer <maintainer@example.com>
+
+**Message**:
+```
+Release version 2.1
+
+- Add new feature X
+- Fix bug Y
+- Update dependencies
+```
+
+## Changed Files
+
+- `apps/lsky/meta.json`
+
+---
+
+<sub>Auto-generated by Apps Image version checker</sub>
+```
+
+### Auto-merge Labels
+
+PRs are automatically labeled:
+
+- Application name (e.g., `lsky`, `icones`)
+- `automerge` - Enables automatic merging if CI passes
+
+```typescript
+// action/src/context/checkAppContext.ts:99
+labels: [this.name, 'automerge']
+```
+
+<Tip>
+Configure GitHub branch protection to require status checks before auto-merge, ensuring all builds pass.
+</Tip>
+
+## Scheduling and Triggers
+
+### Automated Schedule
+
+Runs every 2 hours:
+
+```yaml
+# .github/workflows/check-version.yaml
+on:
+  schedule:
+    - cron: '0 */2 * * *'  # Every 2 hours
+```
+
+### Manual Trigger
+
+Check specific applications on demand:
+
+```yaml
+workflow_dispatch:
+  inputs:
+    context:
+      description: 'Context directory (apps/icones, all, etc.)'
+      type: choice
+      options:
+        - all
+        - apps/icones
+        - apps/rayso
+        # ...
+    create_pr:
+      type: choice
+      default: 'false'
+      options:
+        - 'true'
+        - 'false'
+        - development
+```
+
+**Usage**:
+
+```bash
+# Via GitHub UI: Actions → Check Version → Run workflow
+# Select context: apps/icones
+# Select create_pr: true
+```
+
+### Push Trigger
+
+Runs when meta.json or Dockerfile changes:
+
+```yaml
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - apps/*/meta.json
+      - apps/*/Dockerfile
+      - apps/*/Dockerfile.*
+```
+
+Skip checks with commit message:
+
+```bash
+git commit -m "update docs [skip check]"
+```
+
+## Advanced Configuration
+
+### Check Frequency
+
+Control how often a variant is checked:
+
+```json
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "owner/repo",
+    "checkFrequency": "daily"
+  }
+}
+```
+
+**Options**:
+- `always` (default) - Check every run
+- `daily` - Check once per day
+- `weekly` - Check once per week
+- `manual` - Only check on manual trigger
+
+<Info>
+`checkFrequency` is defined in the schema but not yet fully implemented. Currently, all checks run on every scheduled execution.
+</Info>
+
+### Target Version
+
+Pin to a specific version temporarily:
+
+```json
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "owner/repo",
+    "targetVersion": "v2.0.0"
+  }
+}
+```
+
+When set:
+- Version checking stops at this version
+- Newer versions are ignored
+- Remove `targetVersion` to resume normal tracking
+
+### Process Files
+
+Define files that need placeholder replacement:
+
+```json
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "owner/repo",
+    "processFiles": [
+      "Dockerfile",
+      "docker-compose.yml",
+      "README.md"
+    ]
+  }
+}
+```
+
+During version updates, these files are scanned for placeholders like `{{version}}`, `{{sha}}` and updated accordingly.
+
+## Debugging Version Checks
+
+### Local Testing with act
+
+Test version checking locally using [act](https://github.com/nektos/act):
+
+```bash
+# Check single application
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/icones
+
+# Check multiple applications
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/icones,apps/rayso
+
+# Check all applications
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=all
+```
+
+### Debug Mode
+
+Enable detailed logging:
+
+```yaml
+workflow_dispatch:
+  inputs:
+    debug:
+      type: boolean
+      default: true
+```
+
+Debug output includes:
+- Repository clone/update operations
+- Version detection details
+- Comparison results
+- PR payload data
+
+### Validation Before Commits
+
+Validate meta.json changes:
+
+```bash
+# Check if version format is valid
+jq '.variants.latest.version' apps/myapp/meta.json
+
+# Verify SHA length (should be 40 characters)
+jq -r '.variants.latest.sha | length' apps/myapp/meta.json
+
+# Validate against schema
+npx ajv-cli validate -s .vscode/meta.schema.json -d apps/myapp/meta.json
+```
+
+## Performance Optimization
+
+### Parallel Checking
+
+All applications are checked in parallel:
+
+```typescript
+// action/src/context/checkAppsManager.ts
+public async checkAllVersions() {
+  const results = await Promise.all(
+    this.apps.map(app => app.checkVersions())
+  )
+  // Process results...
+}
+```
+
+### Cached Repositories
+
+Git caching significantly reduces check time:
+
+- **First run**: ~2-3 minutes (clone all repos)
+- **Subsequent runs**: ~30-60 seconds (update cached repos)
+
+### Selective Scanning
+
+When checking specific contexts, only those applications are processed:
+
+```typescript
+// action/src/context/checkAppsManager.ts
+public async scanApps() {
+  const { context } = getCheckVersionConfig()
+  
+  if (context && context !== 'all') {
+    // Only scan specified contexts
+    return context.split(',').map(c => c.trim())
+  }
+  
+  // Scan all apps/*, base/*, test/*
+  return await globby(['apps/*', 'base/*', 'test/*'])
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Choose the Right Check Type">
+    - **`version`**: For projects with package.json or VERSION files
+    - **`sha`**: For projects without formal releases or rapid iteration
+    - **`tag`**: For projects with semantic versioning tags
+    - **`manual`**: For base images or when manual control is needed
+  </Accordion>
+
+  <Accordion title="Use Path Tracking for Monorepos">
+    Avoid unnecessary builds by tracking specific paths:
+    
+    ```json
+    {
+      "checkver": {
+        "type": "sha",
+        "repo": "owner/monorepo",
+        "path": "packages/web"
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Pin Versions Temporarily">
+    When upstream has breaking changes, pin to last working version:
+    
+    ```json
+    {
+      "checkver": {
+        "type": "tag",
+        "repo": "owner/repo",
+        "targetVersion": "v2.5.0"
+      }
+    }
+    ```
+    
+    Update Dockerfile to handle breaking changes, then remove `targetVersion`.
+  </Accordion>
+
+  <Accordion title="Validate Version Format">
+    Ensure versions follow semver when using tag or version types:
+    
+    ```json
+    {
+      "checkver": {
+        "type": "tag",
+        "tagPattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Monitor PR Creation">
+    Regularly check that PRs are being created and auto-merged:
+    
+    - Review GitHub Actions logs
+    - Check PR labels and merge status
+    - Verify image builds after merges
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Version Not Detected
+
+**Problem**: Version check runs but doesn't detect new version.
+
+**Solutions**:
+
+1. **Verify repository URL**:
+   ```bash
+   git ls-remote https://github.com/owner/repo
+   ```
+
+2. **Check branch exists**:
+   ```json
+   {
+     "checkver": {
+       "branch": "main"  // Try "master" if "main" fails
+     }
+   }
+   ```
+
+3. **Validate tag pattern**:
+   ```bash
+   git ls-remote --tags https://github.com/owner/repo
+   ```
+
+### PR Not Created
+
+**Problem**: Version detected but no PR created.
+
+**Solutions**:
+
+1. **Check `create_pr` setting**:
+   ```yaml
+   with:
+     create_pr: 'true'  # Must be string 'true'
+   ```
+
+2. **Verify GitHub token permissions**:
+   - Token needs `repo` and `pull_request` scopes
+   - Check `secrets.PAT` is configured
+
+3. **Review logs** for PR creation errors
+
+### Incorrect Version Extracted
+
+**Problem**: Wrong version number extracted.
+
+**Solutions**:
+
+1. **Add custom regex**:
+   ```json
+   {
+     "checkver": {
+       "type": "version",
+       "file": "VERSION",
+       "regex": "version:\\s*([0-9.]+)"
+     }
+   }
+   ```
+
+2. **Check file path**:
+   ```json
+   {
+     "file": "packages/app/package.json"  // Include subdirectories
+   }
+   ```
+
+## Related
+
+- [meta.json Reference](/concepts/meta-json) - Complete configuration reference
+- [Variants](/concepts/variants) - Multi-variant support
+- [Architecture](/concepts/architecture) - System overview

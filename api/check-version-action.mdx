@@ -1,0 +1,419 @@
+---
+title: Check Version Action
+description: GitHub Action for automated version checking and updates
+---
+
+The `check-version` action automatically checks for upstream version updates and optionally creates pull requests with the changes.
+
+## Overview
+
+This action:
+1. Scans all apps in your repository
+2. Checks for version updates based on `checkver` configuration
+3. Updates `meta.json` files when new versions are found
+4. Optionally creates pull requests with the changes
+5. Generates detailed summary reports
+
+## Usage
+
+### Basic Setup
+
+```yaml .github/workflows/check-version.yaml
+name: Check Version
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'  # Every 2 hours
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Version
+        uses: ./action/check-version
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### With Auto PR Creation
+
+```yaml
+- name: Check Version
+  uses: ./action/check-version
+  with:
+    token: ${{ secrets.PAT }}  # Personal Access Token required for PRs
+    create_pr: 'true'
+```
+
+### Manual Trigger for Specific App
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      context:
+        description: 'App context (e.g., apps/icones)'
+        type: choice
+        default: all
+        options:
+          - all
+          - apps/icones
+          - apps/cobalt
+      create_pr:
+        description: 'Create PR'
+        type: choice
+        default: 'false'
+        options:
+          - 'true'
+          - 'false'
+          - development
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Version
+        uses: ./action/check-version
+        with:
+          token: ${{ secrets.PAT }}
+          context: ${{ inputs.context }}
+          create_pr: ${{ inputs.create_pr }}
+```
+
+## Inputs
+
+<ParamField path="token" type="string" required>
+  GitHub token for repository access.
+
+  - Use `GITHUB_TOKEN` for read-only checks
+  - Use Personal Access Token (PAT) for creating PRs
+
+  ```yaml
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+  ```
+</ParamField>
+
+<ParamField path="context" type="string" default="all">
+  App context to check. Use `all` to check all apps.
+
+  **Examples**:
+  - `all` - Check all apps
+  - `apps/icones` - Check only icones app
+  - `base/nginx` - Check only nginx base image
+
+  ```yaml
+  with:
+    context: apps/icones
+  ```
+</ParamField>
+
+<ParamField path="create_pr" type="'true' | 'false' | 'development'" default="'false'">
+  Control PR creation behavior:
+
+  - `'true'` - Create PR to main/master branch
+  - `'false'` - No PR (dry run)
+  - `'development'` - Create PR to development branch
+
+  ```yaml
+  with:
+    create_pr: 'true'
+  ```
+</ParamField>
+
+<ParamField path="debug" type="boolean" default="false">
+  Enable debug logging.
+
+  ```yaml
+  with:
+    debug: true
+  ```
+</ParamField>
+
+## Outputs
+
+The action provides outputs in the GitHub Actions summary:
+
+### Summary Report
+
+```markdown
+## Check Version Results
+
+### Updated Apps (2)
+
+#### apps/cobalt
+- **latest**: 11.2 → 11.3 (e4b5388)
+- **Commits**: 15 new commits
+- **Changes**: web/package.json updated
+
+#### apps/icones  
+- **latest**: 0bc5918 → a7f3d21 (a7f3d21)
+- **Commits**: 3 new commits
+
+### Up-to-date Apps (12)
+
+✅ All other apps are up to date
+```
+
+## Complete Example
+
+```yaml .github/workflows/check-version.yaml
+name: Check Version
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'  # Every 2 hours
+  workflow_dispatch:
+    inputs:
+      context:
+        description: 'App context'
+        type: choice
+        default: all
+        options:
+          - all
+          - apps/cobalt
+          - apps/icones
+          - apps/haitang
+      create_pr:
+        description: 'Create PR'
+        type: choice
+        default: 'false'
+        options:
+          - 'true'
+          - 'false'
+          - development
+      debug:
+        description: 'Debug mode'
+        type: boolean
+        default: false
+  push:
+    branches:
+      - master
+    paths:
+      - apps/*/meta.json
+      - apps/*/Dockerfile
+
+jobs:
+  check-version:
+    name: Check Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # Required for creating PRs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history required
+
+      - name: Cache Git repositories
+        uses: actions/cache@v4
+        with:
+          path: .git-cache
+          key: git-repos-${{ hashFiles('**/meta.json') }}
+          restore-keys: |
+            git-repos-
+
+      - name: Check Version
+        uses: ./action/check-version
+        env:
+          TZ: Asia/Shanghai
+        with:
+          token: ${{ secrets.PAT }}
+          context: ${{ inputs.context }}
+          create_pr: ${{ inputs.create_pr }}
+          debug: ${{ inputs.debug }}
+```
+
+## How It Works
+
+### 1. Scan Apps
+
+Scans the repository for apps with `meta.json` files:
+- `apps/*/meta.json`
+- `base/*/meta.json`
+- `sync/*/meta.json`
+- `test/*/meta.json`
+
+### 2. Version Checking
+
+For each app variant:
+1. Reads `checkver` configuration
+2. Clones/updates upstream repository (cached in `.git-cache`)
+3. Extracts version based on `checkver.type`:
+   - **version**: Read from file (package.json, VERSION, etc.)
+   - **tag**: Get latest matching Git tag
+   - **sha**: Get latest commit SHA
+   - **manual**: Compare with previous commit
+4. Compares with current `version` and `sha` in meta.json
+
+### 3. Update Detection
+
+Marks app as outdated if:
+- Version string changed
+- OR commit SHA changed
+
+### 4. File Updates
+
+When updates are found:
+1. Updates `meta.json` with new version and SHA
+2. Processes files listed in `checkver.processFiles` with [placeholder](/api/placeholders) replacement
+3. Collects commit information from upstream
+
+### 5. PR Creation
+
+If `create_pr` is enabled:
+1. Creates a new branch: `update/{app-name}-{timestamp}`
+2. Commits changes with descriptive message
+3. Creates pull request with:
+   - Title: "Update {app-name} to {version}"
+   - Detailed changelog from upstream commits
+   - Links to upstream repository
+
+## Caching
+
+The action uses Git repository caching to speed up subsequent runs:
+
+```yaml
+- name: Cache Git repositories
+  uses: actions/cache@v4
+  with:
+    path: .git-cache
+    key: git-repos-${{ hashFiles('**/meta.json') }}
+    restore-keys: |
+      git-repos-
+```
+
+This caches cloned upstream repositories in `.git-cache/` directory.
+
+## Permissions
+
+### Read-only (no PR)
+
+```yaml
+permissions:
+  contents: read
+```
+
+### With PR creation
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+```
+
+## Triggers
+
+### Scheduled Checks
+
+```yaml
+on:
+  schedule:
+    - cron: '0 */2 * * *'  # Every 2 hours
+```
+
+Common schedules:
+- Every 2 hours: `'0 */2 * * *'`
+- Every 6 hours: `'0 */6 * * *'`
+- Daily at midnight: `'0 0 * * *'`
+- Weekly on Monday: `'0 0 * * 1'`
+
+### On Push
+
+```yaml
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - apps/*/meta.json
+      - apps/*/Dockerfile
+```
+
+Runs when meta.json or Dockerfile changes are pushed.
+
+### Manual Dispatch
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      context:
+        description: 'App to check'
+        default: all
+```
+
+Allows manual triggering from GitHub Actions UI.
+
+## Skip Checks
+
+Add `[skip check]` to commit messages to skip version checking:
+
+```bash
+git commit -m "Update docs [skip check]"
+```
+
+## Best Practices
+
+1. **Use caching** to speed up runs:
+   ```yaml
+   - uses: actions/cache@v4
+     with:
+       path: .git-cache
+       key: git-repos-${{ hashFiles('**/meta.json') }}
+   ```
+
+2. **Set appropriate check frequency**:
+   - Stable apps: Check daily or weekly
+   - Development branches: Check every few hours
+   - Use `checkFrequency` in meta.json to control per-app
+
+3. **Use PAT for PR creation**:
+   ```yaml
+   token: ${{ secrets.PAT }}  # Not GITHUB_TOKEN
+   ```
+
+4. **Enable debug for troubleshooting**:
+   ```yaml
+   debug: true
+   ```
+
+5. **Review PRs before merging**:
+   - Check changelog
+   - Verify version bump is correct
+   - Test build if needed
+
+## Troubleshooting
+
+### No updates detected
+
+- Verify `checkver` configuration is correct
+- Check if upstream has new commits/tags
+- Enable `debug: true` for detailed logs
+- Verify repository URL is accessible
+
+### PR creation fails
+
+- Ensure using PAT with `repo` scope
+- Check `pull-requests: write` permission is set
+- Verify branch name doesn't already exist
+
+### Cache issues
+
+- Clear cache manually from Actions UI
+- Update cache key if meta.json structure changed
+- Check `.git-cache` directory size
+
+## Related
+
+- [Checkver Types](/api/checkver-types) - Version checking strategies
+- [Meta Schema](/api/meta-schema) - Configuration reference
+- [Resolve Meta Action](/api/resolve-meta-action) - Build metadata resolution

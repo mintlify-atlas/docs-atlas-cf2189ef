@@ -1,0 +1,490 @@
+---
+title: Adding New Applications
+description: Complete guide for adding new applications to the Apps Image repository
+---
+
+This guide walks you through the complete process of adding a new application to the Apps Image repository, from creating the directory structure to configuring automatic version tracking.
+
+## Overview
+
+Each application in the repository consists of:
+- A `meta.json` file defining metadata and version tracking
+- A `Dockerfile` for building the image
+- Optional build scripts (`pre.sh`, `post.sh`) for custom build steps
+- Optional `README.md` with usage instructions
+
+<Steps>
+
+### Create Application Directory
+
+Create a new directory under `apps/` for applications or `base/` for base images:
+
+```bash
+mkdir -p apps/your-app
+cd apps/your-app
+```
+
+<Note>
+  Use `apps/` for end-user applications (e.g., web apps, tools) and `base/` for foundational images that other images build upon.
+</Note>
+
+### Create meta.json Configuration
+
+The `meta.json` file defines your application's metadata, version tracking strategy, and Docker build configuration.
+
+<Tabs>
+  <Tab title="Version Tracking">
+    Track releases from package.json:
+
+    ```json
+    {
+      "name": "weektodo",
+      "type": "app",
+      "title": "WeekToDo | FOSS Minimalist Weekly Planner",
+      "slogan": "每周任务管理工具，高效规划待办事项",
+      "description": "WeekToDo is a Free and Open Source Minimalist Weekly Planner and To Do list App focused on privacy.",
+      "license": "GPL-3.0 license",
+      "variants": {
+        "latest": {
+          "version": "2.2.0",
+          "sha": "0296d299bd819e5cf31cf993bad9482fd7787981",
+          "checkver": {
+            "type": "version",
+            "repo": "https://github.com/manuelernestog/weektodo",
+            "file": "package.json"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Git Commit SHA">
+    Track the latest commit SHA:
+
+    ```json
+    {
+      "name": "icones",
+      "type": "app",
+      "title": "Icones",
+      "slogan": "开源图标浏览器，搜索浏览 150,000+ 图标",
+      "description": "Icon Explorer with Instant searching, powered by Iconify",
+      "license": "MIT",
+      "variants": {
+        "latest": {
+          "version": "0bc5918",
+          "sha": "0bc59182623617a9238023c183a72863c0ebdfca",
+          "checkver": {
+            "type": "sha",
+            "repo": "https://github.com/antfu-collective/icones"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Git Tags">
+    Track tagged releases:
+
+    ```json
+    {
+      "name": "vscode",
+      "type": "base",
+      "description": "Visual Studio Code is a free source-code editor made by Microsoft.",
+      "license": "MIT",
+      "variants": {
+        "latest": {
+          "version": "1.109.5",
+          "sha": "072586267e68ece9a47aa43f8c108e0dcbf44622",
+          "checkver": {
+            "type": "tag",
+            "repo": "microsoft/vscode"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Manual Updates">
+    For images you'll update manually:
+
+    ```json
+    {
+      "name": "alpine",
+      "type": "base",
+      "description": "Alpine Linux 3.20",
+      "variants": {
+        "latest": {
+          "version": "3.22.1",
+          "sha": "a274bcf3c7710d34df2b38ae6ac4ab5684d8f72d",
+          "checkver": {
+            "type": "manual"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+#### Version Tracking Types
+
+<CodeGroup>
+```json version
+"checkver": {
+  "type": "version",
+  "repo": "https://github.com/owner/repo",
+  "file": "package.json"
+}
+```
+
+```json sha
+"checkver": {
+  "type": "sha",
+  "repo": "https://github.com/owner/repo"
+}
+```
+
+```json tag
+"checkver": {
+  "type": "tag",
+  "repo": "owner/repo"
+}
+```
+
+```json manual
+"checkver": {
+  "type": "manual"
+}
+```
+</CodeGroup>
+
+### Configure Docker Build Settings
+
+Docker configuration can be specified globally or per-variant. The default configuration is:
+
+```json
+{
+  "docker": {
+    "file": "Dockerfile",
+    "images": ["aliuq/{{name}}", "ghcr.io/aliuq/{{name}}"],
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}"
+    ],
+    "platforms": ["linux/amd64", "linux/arm64"]
+  }
+}
+```
+
+#### Custom Tags Example
+
+From `cobalt` app with major version tagging:
+
+```json
+{
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "sha": "e4b53880af4026b8be6a870ae7d8133f744a6181",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/imputnet/cobalt",
+        "file": "web/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+This produces tags: `latest`, `11.3`, and `11`.
+
+#### Available Placeholders
+
+- `{{name}}` - Application name
+- `{{version}}` - Full version (e.g., `1.2.3`)
+- `{{major}}` - Major version (e.g., `1`)
+- `{{minor}}` - Minor version (e.g., `1.2`)
+- `{{sha}}` - Short commit SHA (7 characters)
+- `{{fullSha}}` - Full commit SHA (40 characters)
+
+### Create Dockerfile
+
+Create a `Dockerfile` for your application. You can use placeholders that will be automatically replaced during build.
+
+<Tabs>
+  <Tab title="Multi-stage Build">
+    Example from `icones` app:
+
+    ```dockerfile
+    FROM alpine/git AS source
+    WORKDIR /app
+    ARG VERSION=0bc5918
+    RUN git clone https://github.com/antfu-collective/icones . && git checkout ${VERSION}
+
+    FROM node:22.14.0-alpine3.20 AS build
+    WORKDIR /app
+    COPY --from=source /app .
+    RUN corepack enable && corepack prepare --activate
+    RUN pnpm install && pnpm run build
+
+    FROM aliuq/nginx:vue
+
+    ENV TZ=Asia/Shanghai
+    ENV NODE_ENV=production
+
+    WORKDIR /app
+
+    COPY --from=build /app/dist /app
+
+    CMD ["nginx", "-g", "daemon off;"]
+    EXPOSE 80
+    ```
+  </Tab>
+  <Tab title="Simple Build">
+    Example from `weektodo` app:
+
+    ```dockerfile
+    FROM alpine/git AS base
+    WORKDIR /app
+    ARG VERSION=0296d29
+    RUN git clone https://github.com/manuelernestog/weektodo . && git checkout ${VERSION}
+
+    FROM node:16.20.2-alpine3.18 AS builder
+    WORKDIR /app
+    COPY --from=base /app .
+    RUN yarn install --frozen-lockfile --network-timeout 600000
+    RUN yarn run build
+
+    FROM nginx:1.21.3-alpine
+
+    WORKDIR /usr/share/nginx/html
+    COPY --from=builder /app/dist /usr/share/nginx/html
+
+    EXPOSE 80
+    ```
+  </Tab>
+  <Tab title="Pre-built Assets">
+    Example from `rayso` app (uses pre.sh):
+
+    ```dockerfile
+    FROM node:24-alpine AS runner
+
+    WORKDIR /app
+
+    ENV NODE_ENV=production \
+        NEXT_TELEMETRY_DISABLED=1 \
+        PORT=3000 \
+        HOSTNAME="0.0.0.0"
+
+    RUN addgroup --system --gid 1001 nodejs && \
+        adduser --system --uid 1001 nextjs && \
+        mkdir -p .next && \
+        chown -R nextjs:nodejs /app
+
+    USER nextjs
+
+    COPY --chown=nextjs:nodejs ./app/public ./public
+    COPY --chown=nextjs:nodejs ./app/.next/standalone/apps/rayso/app ./
+    COPY --chown=nextjs:nodejs ./app/.next/static ./.next/static
+
+    EXPOSE 3000
+
+    CMD ["node", "server.js"]
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  Use `ARG VERSION` in your Dockerfile to receive the version from the build process. The placeholder will be automatically replaced with the actual version.
+</Tip>
+
+### Add Custom Build Scripts (Optional)
+
+For complex build processes, especially multi-platform web applications, use `pre.sh` and `post.sh` scripts.
+
+<Note>
+  Build scripts are particularly useful for Next.js apps on arm64, which build very slowly. Pre-build assets in `pre.sh` and copy them in the Dockerfile for faster multi-platform builds.
+</Note>
+
+See the [Build Scripts guide](/guides/build-scripts) for detailed examples.
+
+### Create README (Optional)
+
+Add a `README.md` file with:
+- Application description
+- Usage instructions
+- Environment variables
+- Example docker-compose.yml
+- Links to upstream project
+
+</Steps>
+
+## Multi-Variant Applications
+
+You can define multiple variants of an application, each with its own version tracking and Docker configuration.
+
+Example from `srcbook` app:
+
+```json
+{
+  "name": "srcbook",
+  "type": "app",
+  "title": "SrcBook",
+  "variants": {
+    "latest": {
+      "version": "0.0.19",
+      "sha": "0ba24b1ea83b0dd20137236ce9aebc3ff86bff37",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/srcbookdev/srcbook",
+        "file": "srcbook/package.json"
+      }
+    },
+    "tls": {
+      "version": "0.0.19",
+      "sha": "0ba24b1ea83b0dd20137236ce9aebc3ff86bff37",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/srcbookdev/srcbook",
+        "file": "srcbook/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=tls",
+          "type=raw,value={{version}}-tls"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Disabling Variants
+
+You can temporarily disable a variant by setting `"enabled": false`:
+
+```json
+{
+  "variants": {
+    "stable": {
+      "enabled": false,
+      "checkver": {
+        "type": "tag",
+        "repo": "khoben/telemirror"
+      }
+    }
+  }
+}
+```
+
+## Testing Your Application
+
+Before committing, test your application locally using `act`:
+
+<CodeGroup>
+```bash Version Check
+# Check version tracking
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/your-app
+```
+
+```bash Dry Run
+# View Docker metadata without building
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/your-app \
+  --input build=false \
+  --input notify=false
+```
+
+```bash Full Build
+# Full build test
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/your-app
+```
+</CodeGroup>
+
+See the [Local Testing guide](/guides/local-testing) for more details.
+
+## Common Patterns
+
+### Monorepo Applications
+
+For monorepo projects, specify the path to the package.json:
+
+```json
+{
+  "checkver": {
+    "type": "version",
+    "repo": "https://github.com/imputnet/cobalt",
+    "file": "web/package.json"
+  }
+}
+```
+
+### Tracking Specific Paths
+
+For tracking commits in a specific directory:
+
+```json
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "https://github.com/imputnet/cobalt",
+    "path": "web"
+  }
+}
+```
+
+### Development Variants
+
+Create separate variants for stable and development versions:
+
+```json
+{
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/imputnet/cobalt",
+        "file": "web/package.json"
+      }
+    },
+    "dev": {
+      "version": "8d9bccc",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/imputnet/cobalt",
+        "path": "web"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+<Warning>
+  Ensure your repository has the correct permissions to clone source repositories. For private repositories, you may need to configure authentication.
+</Warning>
+
+## Next Steps
+
+- Learn about [Base Images](/guides/base-images) for creating reusable foundations
+- Explore [Build Scripts](/guides/build-scripts) for custom build processes
+- Configure [Docker Settings](/guides/docker-configuration) for advanced scenarios
+- Set up [Local Testing](/guides/local-testing) with act

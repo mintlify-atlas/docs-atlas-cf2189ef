@@ -1,0 +1,578 @@
+---
+title: Local Testing with act
+description: Testing GitHub Actions workflows locally using act before pushing to the repository
+---
+
+The Apps Image repository uses [act](https://github.com/nektos/act) to run GitHub Actions workflows locally. This allows you to test version checking and image building before pushing changes.
+
+## Prerequisites
+
+Install act on your system:
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    brew install act
+    ```
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    # Using curl
+    curl -s https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
+    
+    # Or download from releases
+    # https://github.com/nektos/act/releases
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```bash
+    # Using chocolatey
+    choco install act-cli
+    
+    # Or using scoop
+    scoop install act
+    ```
+  </Tab>
+</Tabs>
+
+## Testing Version Checking
+
+The `check-version.yaml` workflow validates version tracking configuration and checks for updates.
+
+### Check Single Application
+
+Test version checking for a specific application:
+
+```bash
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/icones
+```
+
+This will:
+1. Read the application's meta.json
+2. Check the configured repository for version updates
+3. Display current and available versions
+4. Show whether an update is needed
+
+### Check Multiple Applications
+
+Test several applications at once:
+
+```bash
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/icones,apps/rayso,base/nginx
+```
+
+<Note>
+  Separate multiple contexts with commas (no spaces).
+</Note>
+
+### Check All Applications
+
+Run version checks across the entire repository:
+
+```bash
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=all
+```
+
+<Warning>
+  Checking all applications may take several minutes depending on the number of apps and API rate limits.
+</Warning>
+
+### Check Base Images
+
+Test base image version tracking:
+
+```bash
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=base/nginx
+```
+
+## Testing Image Builds
+
+The `build-test.yaml` workflow allows you to test Docker image building locally.
+
+### Dry Run (Metadata Only)
+
+View Docker metadata without actually building the image:
+
+```bash
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/icones \
+  --input build=false \
+  --input notify=false
+```
+
+This shows:
+- Docker image names
+- Tags that will be generated
+- Platforms that will be built
+- Build arguments and placeholders
+
+<Tip>
+  Dry runs are fast and don't require Docker. Use them to validate configuration before building.
+</Tip>
+
+### Full Build Test
+
+Build the Docker image locally:
+
+```bash
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/icones
+```
+
+This will:
+1. Run pre-build scripts (if any)
+2. Build the Docker image
+3. Tag the image locally
+4. Show build logs and results
+
+<Note>
+  By default, `build=true` and `notify=false` when using the test workflow.
+</Note>
+
+### Test Specific Variants
+
+Build only specific variants:
+
+```bash
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=base/nginx \
+  --input build=false \
+  --input notify=false \
+  --input variants=latest,vue
+```
+
+Omit the `variants` input to test all variants.
+
+## Real-World Testing Examples
+
+### Test New Application
+
+When adding a new application, test it thoroughly:
+
+<Steps>
+
+### Check version tracking works
+
+```bash
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/your-app
+```
+
+Verify it detects the correct version from the upstream repository.
+
+### Validate Docker metadata
+
+```bash
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/your-app \
+  --input build=false \
+  --input notify=false
+```
+
+Check that tags and platforms are correct.
+
+### Test pre-build script
+
+If you have a pre.sh script:
+
+```bash
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/your-app \
+  --input notify=false
+```
+
+Watch the pre.sh script execution and verify it completes successfully.
+
+### Verify final image
+
+After successful build, test the image:
+
+```bash
+docker run -p 3000:3000 aliuq/your-app:latest
+```
+
+</Steps>
+
+### Test Multi-Variant Configuration
+
+For applications with multiple variants (like `cobalt` or `nginx`):
+
+<CodeGroup>
+```bash Test All Variants
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=base/nginx \
+  --input build=false \
+  --input notify=false
+```
+
+```bash Test Specific Variant
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=base/nginx \
+  --input build=false \
+  --input notify=false \
+  --input variants=vue
+```
+
+```bash Test Production + Dev
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/cobalt \
+  --input build=false \
+  --input notify=false \
+  --input variants=latest,dev
+```
+</CodeGroup>
+
+### Test Version Tracking Types
+
+Different version tracking strategies:
+
+<Tabs>
+  <Tab title="Package.json Version">
+    ```bash
+    # Test version tracking from package.json
+    act workflow_dispatch -W .github/workflows/check-version.yaml \
+      --input debug=true \
+      --input context=apps/weektodo
+    ```
+
+    Should show the version from `package.json` in the repository.
+  </Tab>
+  <Tab title="Git Commit SHA">
+    ```bash
+    # Test SHA tracking
+    act workflow_dispatch -W .github/workflows/check-version.yaml \
+      --input debug=true \
+      --input context=apps/icones
+    ```
+
+    Should show the latest commit SHA from the repository.
+  </Tab>
+  <Tab title="Git Tags">
+    ```bash
+    # Test tag tracking
+    act workflow_dispatch -W .github/workflows/check-version.yaml \
+      --input debug=true \
+      --input context=base/vscode
+    ```
+
+    Should show the latest Git tag from the repository.
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    # Manual versioning (no automatic checks)
+    act workflow_dispatch -W .github/workflows/check-version.yaml \
+      --input debug=true \
+      --input context=base/alpine
+    ```
+
+    Should indicate that manual versioning is configured.
+  </Tab>
+</Tabs>
+
+## Workflow Input Parameters
+
+### check-version.yaml Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `debug` | No | `false` | Enable debug output |
+| `context` | Yes | - | Application path(s) or "all" |
+
+### build-test.yaml Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `debug` | No | `false` | Enable debug output |
+| `context` | Yes | - | Application path (e.g., "apps/icones") |
+| `build` | No | `true` | Actually build the image |
+| `notify` | No | `false` | Send notifications |
+| `variants` | No | (all) | Comma-separated variant names |
+
+## Understanding Output
+
+### Version Check Output
+
+```
+✓ Checking apps/icones
+  Current version: 0bc5918
+  Latest version: 0bc5918
+  Status: Up to date
+```
+
+or
+
+```
+✓ Checking apps/weektodo
+  Current version: 2.2.0
+  Latest version: 2.3.0
+  Status: Update available
+```
+
+### Build Output
+
+```
+✓ Running pre-build script: pre.sh
++ VERSION=73fac26
++ mkdir -p app
++ cd app
+...
+
+✓ Building Docker image
+  Image: aliuq/rayso
+  Tags: latest, 73fac26
+  Platforms: linux/amd64, linux/arm64
+...
+
+✓ Build successful
+```
+
+## Debugging Build Failures
+
+### Pre-build Script Failures
+
+If the pre.sh script fails:
+
+1. Check the script output for the specific error
+2. Verify version placeholders are correct
+3. Test the script manually:
+
+```bash
+cd apps/your-app
+bash -x pre.sh
+```
+
+The `-x` flag shows each command as it executes.
+
+### Docker Build Failures
+
+If the Docker build fails:
+
+1. Check Dockerfile syntax
+2. Verify version ARG is correct:
+
+```dockerfile
+ARG VERSION=placeholder
+```
+
+3. Test the Dockerfile directly:
+
+```bash
+docker build -t test --build-arg VERSION=1.0.0 apps/your-app
+```
+
+### Version Detection Failures
+
+If version checking fails:
+
+1. Verify the repository URL is correct
+2. Check the file path for version tracking:
+
+```json
+{
+  "checkver": {
+    "type": "version",
+    "repo": "https://github.com/owner/repo",
+    "file": "package.json"  // Verify this exists
+  }
+}
+```
+
+3. For monorepos, specify the path:
+
+```json
+{
+  "checkver": {
+    "type": "version",
+    "repo": "https://github.com/owner/repo",
+    "file": "web/package.json",  // Subdirectory path
+    "path": "web"  // For SHA tracking
+  }
+}
+```
+
+## Common Testing Workflows
+
+### Before Committing
+
+Always test before pushing changes:
+
+```bash
+# 1. Check version tracking
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/your-app
+
+# 2. Validate Docker metadata
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/your-app \
+  --input build=false \
+  --input notify=false
+
+# 3. Test full build
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/your-app
+
+# 4. Test the image
+docker run -p 3000:3000 aliuq/your-app:latest
+```
+
+### Testing Configuration Changes
+
+When updating meta.json:
+
+```bash
+# Test metadata generation
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/your-app \
+  --input build=false \
+  --input notify=false
+```
+
+Review the output to verify:
+- Image names are correct
+- Tags are generated as expected
+- Platforms are appropriate
+- Placeholders are replaced properly
+
+### Testing Base Image Updates
+
+When updating a base image:
+
+```bash
+# 1. Build the base image
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=base/nginx
+
+# 2. Test an app that uses it
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/icones
+```
+
+## Performance Tips
+
+### Use Dry Runs First
+
+Always validate metadata before building:
+
+```bash
+# Fast: 1-2 seconds
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input context=apps/icones \
+  --input build=false \
+  --input notify=false
+
+# Slow: 5-30 minutes
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input context=apps/icones
+```
+
+### Test Specific Variants
+
+Don't build all variants if you only changed one:
+
+```bash
+# Only test the dev variant
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input context=apps/cobalt \
+  --input variants=dev
+```
+
+### Use Docker BuildKit
+
+Enable BuildKit for faster builds:
+
+```bash
+export DOCKER_BUILDKIT=1
+```
+
+Or add to your shell configuration:
+
+```bash
+echo 'export DOCKER_BUILDKIT=1' >> ~/.bashrc
+```
+
+<Tip>
+  BuildKit provides better caching, parallel builds, and more efficient layer management.
+</Tip>
+
+## Troubleshooting
+
+### act Not Found
+
+If `act` command is not found:
+
+```bash
+# Check if installed
+which act
+
+# Install if missing (macOS)
+brew install act
+
+# Verify installation
+act --version
+```
+
+### Docker Daemon Not Running
+
+If you get Docker connection errors:
+
+```bash
+# Start Docker Desktop (macOS/Windows)
+# Or start Docker daemon (Linux)
+sudo systemctl start docker
+```
+
+### Workflow Not Found
+
+If act can't find the workflow:
+
+```bash
+# Make sure you're in the repository root
+pwd
+
+# List available workflows
+ls .github/workflows/
+
+# Use absolute path if needed
+act workflow_dispatch -W $PWD/.github/workflows/check-version.yaml
+```
+
+### Permission Denied
+
+If you get permission errors:
+
+```bash
+# Add user to docker group (Linux)
+sudo usermod -aG docker $USER
+
+# Log out and back in for changes to take effect
+```
+
+## Next Steps
+
+- Learn about [Adding Applications](/guides/adding-applications) to understand what you're testing
+- Explore [Build Scripts](/guides/build-scripts) for complex build processes
+- Review [Docker Configuration](/guides/docker-configuration) to understand metadata generation
+- Read the [act documentation](https://github.com/nektos/act) for advanced usage

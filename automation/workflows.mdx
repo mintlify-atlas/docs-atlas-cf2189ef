@@ -1,0 +1,256 @@
+---
+title: GitHub Actions Workflows
+description: Overview of all automated workflows in the Apps Image repository
+---
+
+The Apps Image repository uses GitHub Actions to automate version checking, image building, and deployment processes. This section provides an overview of all workflows and their purposes.
+
+## Workflow Overview
+
+### Core Workflows
+
+<CardGroup cols={2}>
+  <Card title="Check Version" icon="magnifying-glass" href="/automation/version-checks">
+    Automatically detects upstream version updates and creates pull requests
+  </Card>
+  <Card title="Build Image" icon="docker" href="/automation/image-building">
+    Builds and pushes Docker images to multiple registries
+  </Card>
+  <Card title="Build Test" icon="flask">
+    Local testing workflow for ACT environment
+  </Card>
+  <Card title="Deploy Pages" icon="globe">
+    Builds and deploys documentation to GitHub Pages
+  </Card>
+  <Card title="Sync README" icon="book">
+    Syncs README files to Docker Hub repositories
+  </Card>
+</CardGroup>
+
+## Workflow Triggers
+
+### Check Version Workflow
+
+<ParamField path="schedule" type="cron">
+  Runs every 2 hours: `0 */2 * * *`
+</ParamField>
+
+<ParamField path="workflow_dispatch" type="manual">
+  Manual trigger with customizable options:
+  - **context**: Select specific app or `all` apps
+  - **create_pr**: Whether to create PR (`true`, `false`, or `development`)
+  - **debug**: Enable debug mode
+</ParamField>
+
+<ParamField path="push" type="automatic">
+  Triggers on push to `master` branch when:
+  - `apps/*/meta.json` changes
+  - `apps/*/Dockerfile` or `apps/*/Dockerfile.*` changes
+  - `base/*/meta.json` or Dockerfile changes
+  - `test/*/meta.json` or Dockerfile changes
+</ParamField>
+
+<Note>
+  Add `[skip check]` to your commit message to skip the version check workflow
+</Note>
+
+### Build Image Workflow
+
+<ParamField path="workflow_dispatch" type="manual">
+  Manual trigger with options:
+  - **context**: Required app context (e.g., `apps/icones`)
+  - **variants**: Build variants (default: `latest`)
+  - **debug**: Debug mode toggle
+</ParamField>
+
+<ParamField path="pull_request" type="automatic">
+  Triggers on pull requests to `master` branch
+</ParamField>
+
+### Deploy Pages Workflow
+
+```yaml
+on:
+  push:
+    branches: [master]
+    paths: ['docs/**']
+  pull_request:
+    branches: [master]
+    paths: ['docs/**']
+  workflow_dispatch:
+```
+
+Runs when documentation files in `docs/**` are modified or manually triggered.
+
+### Sync README Workflow
+
+```yaml
+on:
+  push:
+    branches: [master]
+    paths:
+      - apps/*/README.md
+      - base/*/README.md
+```
+
+Automatically syncs README files to Docker Hub when modified.
+
+## Workflow Jobs
+
+### Check Version Jobs
+
+<Steps>
+  <Step title="Checkout Repository">
+    Clones the repository with full history (`fetch-depth: 0`)
+  </Step>
+  <Step title="Cache Git Repositories">
+    Caches cloned upstream repositories to speed up subsequent checks
+  </Step>
+  <Step title="Version Check">
+    Executes the custom `check-version` action to compare versions
+  </Step>
+</Steps>
+
+### Build Image Jobs
+
+<Steps>
+  <Step title="Resolve Metadata">
+    Uses `resolve-meta` action to generate build matrix from `meta.json`
+  </Step>
+  <Step title="Build Docker Images">
+    Multi-platform Docker builds with caching and registry authentication
+  </Step>
+  <Step title="Merge Pull Request">
+    Auto-merges PR after successful build (PR context only)
+  </Step>
+  <Step title="Build Apps Data">
+    Generates `docs/data.json` and triggers documentation deployment
+  </Step>
+</Steps>
+
+## Permissions
+
+### Check Version
+
+```yaml
+permissions:
+  contents: read
+```
+
+### Build Image
+
+```yaml
+permissions:
+  contents: read    # Read repository contents
+  packages: write   # Push to GitHub Container Registry
+  pull-requests: write  # Auto-merge PRs
+```
+
+### Deploy Pages
+
+```yaml
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+```
+
+## Environment Variables
+
+All workflows use the following timezone setting:
+
+```yaml
+env:
+  TZ: Asia/Shanghai
+```
+
+### Registry Credentials
+
+<CodeGroup>
+
+```yaml Docker Hub
+env:
+  DOCKERHUB_USERNAME: aliuq
+
+secrets:
+  DOCKERHUB_USERNAME
+  DOCKERHUB_TOKEN
+```
+
+```yaml GitHub Container Registry
+env:
+  GHCR_USERNAME: aliuq
+
+secrets:
+  GITHUB_TOKEN  # Automatically provided
+```
+
+```yaml Aliyun Container Registry
+env:
+  ALI_ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  ALI_ACR_USERNAME: aliuq
+
+secrets:
+  ALI_ACR_REGISTRY
+  ALI_ACR_USERNAME
+  ALI_ACR_PASSWORD
+```
+
+</CodeGroup>
+
+## Workflow Outputs
+
+### Metadata Job Output
+
+The metadata resolution job outputs a matrix for parallel builds:
+
+```typescript
+outputs:
+  matrix: ${{ steps.metadata.outputs.matrix }}
+  latest: ${{ steps.metadata.outputs.latest }}
+```
+
+This matrix includes:
+- Build context and Dockerfile path
+- Platform architectures
+- Image tags and labels
+- Registry push flags
+- Pre/post build scripts
+
+## Concurrency Control
+
+### Deploy Pages
+
+```yaml
+concurrency:
+  group: pages
+  cancel-in-progress: true
+```
+
+Ensures only one deployment runs at a time, canceling previous runs.
+
+## Notifications
+
+The build workflow sends Telegram notifications on successful builds:
+
+```yaml
+- name: Notification
+  uses: aliuq/telegram-action@v1
+  with:
+    bot_token: ${{ secrets.BOT_TOKEN }}
+    chat_id: ${{ secrets.CHAT_ID }}
+    message: |
+      🎉 has new image builds
+      #build_image #app_{{name}}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Version Checks" icon="magnifying-glass" href="/automation/version-checks">
+    Learn how automatic version checking works
+  </Card>
+  <Card title="Image Building" icon="docker" href="/automation/image-building">
+    Understand the Docker image build process
+  </Card>
+</CardGroup>

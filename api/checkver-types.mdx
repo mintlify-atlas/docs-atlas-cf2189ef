@@ -1,0 +1,452 @@
+---
+title: Checkver Types
+description: Version checking strategies for automated updates
+---
+
+The `checkver` field in your variant configuration determines how Apps Image checks for new versions from upstream repositories.
+
+## Overview
+
+Apps Image supports multiple version checking strategies:
+
+- **`version`** - Track version from a file (e.g., package.json)
+- **`tag`** - Track Git tags/releases
+- **`sha`** - Track latest commit SHA
+- **`manual`** - Manual version updates
+- **`registry`** - Track from container registry (experimental)
+
+## Version Check Schema
+
+```typescript
+export interface VersionCheck {
+  /** Version check type */
+  type: CheckVersionType
+  /** Upstream repository URL */
+  repo?: string
+  /** Branch to check */
+  branch?: string
+  /** Version file path (for 'version' type) */
+  file?: string
+  /** Path for SHA checking (for 'sha' type) */
+  path?: string
+  /** Version matching regex */
+  regex?: string
+  /** Tag pattern (for 'tag' type) */
+  tagPattern?: string
+  /** Target version (manual override) */
+  targetVersion?: string
+  /** Files to process with placeholders */
+  processFiles?: string[]
+  /** Check frequency */
+  checkFrequency?: CheckFrequency
+  /** Last check timestamp (ISO 8601) */
+  lastCheck?: string
+}
+
+export type CheckVersionType = 'version' | 'sha' | 'tag' | 'manual' | 'registry'
+export type CheckFrequency = 'always' | 'daily' | 'weekly' | 'manual'
+```
+
+## Type: version
+
+Track version from a file in the upstream repository (e.g., `package.json`, `VERSION`, etc.).
+
+<ParamField path="type" type="'version'" required>
+  Set to `"version"` for file-based version tracking.
+</ParamField>
+
+<ParamField path="repo" type="string" required>
+  Upstream repository URL. Supports:
+  - Full URL: `https://github.com/owner/repo`
+  - Short form: `owner/repo` (assumes GitHub)
+
+  ```json
+  "repo": "https://github.com/imputnet/cobalt"
+  ```
+</ParamField>
+
+<ParamField path="file" type="string" required>
+  Path to version file in the repository.
+
+  ```json
+  "file": "web/package.json"
+  ```
+</ParamField>
+
+<ParamField path="branch" type="string" default="default branch">
+  Git branch to check.
+
+  ```json
+  "branch": "main"
+  ```
+</ParamField>
+
+<ParamField path="regex" type="string">
+  Regular expression to extract version from file. First capture group is used.
+
+  ```json
+  "regex": "\"version\":\\s*\"([^\"]+)\""
+  ```
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```json package.json version
+{
+  "checkver": {
+    "type": "version",
+    "repo": "imputnet/cobalt",
+    "file": "web/package.json"
+  }
+}
+```
+
+```json VERSION file
+{
+  "checkver": {
+    "type": "version",
+    "repo": "https://github.com/example/app",
+    "file": "VERSION"
+  }
+}
+```
+
+```json Custom regex
+{
+  "checkver": {
+    "type": "version",
+    "repo": "owner/repo",
+    "file": "config.yaml",
+    "regex": "version:\\s*([\\d.]+)"
+  }
+}
+```
+</CodeGroup>
+
+### How it Works
+
+1. Clones or updates the upstream repository
+2. Reads the specified file
+3. Extracts version using:
+   - Built-in `package.json` parser (if file is `package.json`)
+   - Custom regex (if `regex` is provided)
+   - Raw file content (default)
+4. Validates version is valid semver
+5. Gets the commit SHA for the version file
+6. Compares with current `version` and `sha` in meta.json
+
+## Type: tag
+
+Track Git tags/releases from the upstream repository.
+
+<ParamField path="type" type="'tag'" required>
+  Set to `"tag"` for tag-based version tracking.
+</ParamField>
+
+<ParamField path="repo" type="string" required>
+  Upstream repository URL.
+
+  ```json
+  "repo": "https://github.com/usememos/telegram-integration"
+  ```
+</ParamField>
+
+<ParamField path="branch" type="string">
+  Branch to check tags from.
+</ParamField>
+
+<ParamField path="tagPattern" type="string">
+  Regex pattern to match tags. If not specified, finds the first valid semver tag.
+
+  ```json
+  "tagPattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+  ```
+</ParamField>
+
+<ParamField path="targetVersion" type="string">
+  Pin to a specific tag.
+
+  ```json
+  "targetVersion": "v1.2.3"
+  ```
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```json Latest semver tag
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "usememos/telegram-integration"
+  }
+}
+```
+
+```json Tag pattern
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "owner/repo",
+    "tagPattern": "^release-"
+  }
+}
+```
+
+```json Pinned tag
+{
+  "checkver": {
+    "type": "tag",
+    "repo": "owner/repo",
+    "targetVersion": "v2.0.0"
+  }
+}
+```
+</CodeGroup>
+
+### How it Works
+
+1. Clones or updates the upstream repository
+2. Gets all Git tags
+3. Filters tags by:
+   - `targetVersion` (if specified) - exact match
+   - `tagPattern` (if specified) - regex match
+   - Valid semver (default)
+4. Selects the first matching tag
+5. Gets the commit SHA for the tag
+6. Strips `v` prefix from tag for version
+7. Compares with current `version` and `sha`
+
+## Type: sha
+
+Track the latest commit SHA from the upstream repository.
+
+<ParamField path="type" type="'sha'" required>
+  Set to `"sha"` for commit-based tracking.
+</ParamField>
+
+<ParamField path="repo" type="string" required>
+  Upstream repository URL.
+
+  ```json
+  "repo": "antfu-collective/icones"
+  ```
+</ParamField>
+
+<ParamField path="branch" type="string" default="default branch">
+  Branch to track.
+
+  ```json
+  "branch": "develop"
+  ```
+</ParamField>
+
+<ParamField path="path" type="string">
+  Track commits that modified a specific path.
+
+  ```json
+  "path": "web"
+  ```
+</ParamField>
+
+<ParamField path="targetVersion" type="string">
+  Pin to a specific commit SHA (short or full).
+
+  ```json
+  "targetVersion": "abc1234"
+  ```
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```json Track HEAD
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "https://github.com/antfu-collective/icones"
+  }
+}
+```
+
+```json Track branch
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "owner/repo",
+    "branch": "develop"
+  }
+}
+```
+
+```json Track path
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "imputnet/cobalt",
+    "path": "web"
+  }
+}
+```
+
+```json Pin to commit
+{
+  "checkver": {
+    "type": "sha",
+    "repo": "owner/repo",
+    "targetVersion": "abc123def456"
+  }
+}
+```
+</CodeGroup>
+
+### How it Works
+
+1. Clones or updates the upstream repository
+2. Gets the latest commit SHA:
+   - From `targetVersion` (if specified)
+   - From specific `path` (if specified)
+   - From HEAD (default)
+3. Uses first 7 characters as version
+4. Compares with current `version` and `sha`
+
+## Type: manual
+
+Manual version management - you update the version in meta.json directly.
+
+<ParamField path="type" type="'manual'" required>
+  Set to `"manual"` for manual version control.
+</ParamField>
+
+### Example
+
+```json base/alpine/meta.json
+{
+  "name": "alpine",
+  "type": "base",
+  "variants": {
+    "latest": {
+      "version": "3.22.1",
+      "sha": "a274bcf3c7710d34df2b38ae6ac4ab5684d8f72d",
+      "checkver": {
+        "type": "manual"
+      }
+    }
+  }
+}
+```
+
+### How it Works
+
+1. Reads previous version from Git history (`HEAD~1`)
+2. Compares with current version in meta.json
+3. If changed, generates new SHA from current commit
+4. Creates update if version differs
+
+<Note>
+With manual type, you need to update both `version` and commit your changes. The SHA will be automatically updated on commit.
+</Note>
+
+## Type: registry
+
+<Warning>
+Experimental - not fully implemented yet.
+</Warning>
+
+Track versions from container registry APIs.
+
+```json
+{
+  "checkver": {
+    "type": "registry"
+  }
+}
+```
+
+## Common Fields
+
+### Check Frequency
+
+<ParamField path="checkFrequency" type="'always' | 'daily' | 'weekly' | 'manual'" default="always">
+  How often to check for updates:
+  - `always` - Check on every scheduled run
+  - `daily` - Check once per day
+  - `weekly` - Check once per week
+  - `manual` - Only check on manual trigger
+
+  ```json
+  "checkFrequency": "daily"
+  ```
+</ParamField>
+
+### Process Files
+
+<ParamField path="processFiles" type="string[]">
+  List of files to process with placeholder replacement when version updates.
+
+  ```json
+  "processFiles": [
+    "Dockerfile",
+    "docker-compose.yml"
+  ]
+  ```
+</ParamField>
+
+See [Placeholders](/api/placeholders) for available template variables.
+
+## Repository URL Formats
+
+All `repo` fields support multiple formats:
+
+<CodeGroup>
+```json Full HTTPS URL
+"repo": "https://github.com/owner/repo"
+```
+
+```json Short form (GitHub)
+"repo": "owner/repo"
+```
+
+```json With .git suffix
+"repo": "https://github.com/owner/repo.git"
+```
+</CodeGroup>
+
+Short form automatically expands to `https://github.com/{owner}/{repo}`.
+
+## Best Practices
+
+1. **Choose the right type**:
+   - Use `version` for apps with version files
+   - Use `tag` for apps with release tags
+   - Use `sha` for tracking latest commits or monorepos
+   - Use `manual` for base images or complex cases
+
+2. **Optimize check frequency**:
+   - Set `checkFrequency: "daily"` for stable releases
+   - Use `always` for development branches
+
+3. **Use path for monorepos**:
+   ```json
+   {
+     "type": "sha",
+     "repo": "owner/monorepo",
+     "path": "packages/web"
+   }
+   ```
+
+4. **Pin versions during testing**:
+   ```json
+   {
+     "type": "tag",
+     "repo": "owner/repo",
+     "targetVersion": "v1.2.3"
+   }
+   ```
+
+## Related
+
+- [Meta Schema](/api/meta-schema) - Complete meta.json reference
+- [Placeholders](/api/placeholders) - Template variables
+- [Check Version Action](/api/check-version-action) - GitHub Action for version checking

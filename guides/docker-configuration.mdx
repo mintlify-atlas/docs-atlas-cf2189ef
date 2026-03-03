@@ -1,0 +1,634 @@
+---
+title: Docker Configuration
+description: Customizing Docker build configuration for images, tags, and platforms
+---
+
+Docker configuration controls how your images are built, tagged, and published. This guide covers all available configuration options and patterns.
+
+## Default Configuration
+
+If you don't specify Docker configuration, these defaults are used:
+
+```json
+{
+  "docker": {
+    "file": "Dockerfile",
+    "images": ["aliuq/{{name}}", "ghcr.io/aliuq/{{name}}"],
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}"
+    ],
+    "platforms": ["linux/amd64", "linux/arm64"]
+  }
+}
+```
+
+This configuration:
+- Uses `Dockerfile` in the app directory
+- Publishes to Docker Hub and GitHub Container Registry
+- Tags images as `latest` and with the version number
+- Builds for AMD64 and ARM64 architectures
+
+## Configuration Levels
+
+Docker configuration can be specified at two levels:
+
+1. **Global level** - Applies to all variants
+2. **Variant level** - Overrides global settings for specific variants
+
+### Global Configuration
+
+```json
+{
+  "name": "myapp",
+  "type": "app",
+  "docker": {
+    "file": "Dockerfile",
+    "platforms": ["linux/amd64"]
+  },
+  "variants": {
+    "latest": {
+      "version": "1.0.0"
+    }
+  }
+}
+```
+
+All variants use the global Docker configuration.
+
+### Variant-Specific Configuration
+
+```json
+{
+  "name": "myapp",
+  "variants": {
+    "latest": {
+      "version": "1.0.0",
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "abc1234",
+      "docker": {
+        "file": "Dockerfile.dev",
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+Each variant can have its own Docker configuration.
+
+## Image Names
+
+The `images` field specifies where to publish your Docker images.
+
+### Default Registries
+
+```json
+{
+  "docker": {
+    "images": [
+      "aliuq/{{name}}",
+      "ghcr.io/aliuq/{{name}}"
+    ]
+  }
+}
+```
+
+Publishes to:
+- Docker Hub: `aliuq/myapp`
+- GitHub Container Registry: `ghcr.io/aliuq/myapp`
+
+### Custom Registries
+
+```json
+{
+  "docker": {
+    "images": [
+      "myregistry.example.com/{{name}}",
+      "quay.io/myorg/{{name}}"
+    ]
+  }
+}
+```
+
+### Available Placeholders
+
+- `{{name}}` - Application name from meta.json
+- `{{version}}` - Current version
+- `{{sha}}` - Short commit SHA
+
+## Image Tags
+
+Tags determine which version identifiers are applied to your images.
+
+### Basic Tags
+
+<Tabs>
+  <Tab title="Latest + Version">
+    Default pattern for stable releases:
+
+    ```json
+    {
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    }
+    ```
+
+    Produces: `latest`, `1.2.3`
+  </Tab>
+  <Tab title="Major Version">
+    From the `cobalt` app:
+
+    ```json
+    {
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}"
+        ]
+      }
+    }
+    ```
+
+    Produces: `latest`, `11.3`, `11`
+  </Tab>
+  <Tab title="Variant Tags">
+    From the `nginx` base image:
+
+    ```json
+    {
+      "variants": {
+        "vue": {
+          "docker": {
+            "tags": [
+              "type=raw,value=vue",
+              "type=raw,value={{version}}-vue"
+            ]
+          }
+        },
+        "svelte": {
+          "docker": {
+            "tags": [
+              "type=raw,value=svelte",
+              "type=raw,value={{version}}-svelte"
+            ]
+          }
+        }
+      }
+    }
+    ```
+
+    Produces: `vue`, `0.1.0-vue`, `svelte`, `0.1.0-svelte`
+  </Tab>
+  <Tab title="Development Tags">
+    From the `cobalt` dev variant:
+
+    ```json
+    {
+      "variants": {
+        "dev": {
+          "docker": {
+            "tags": [
+              "type=raw,value=dev",
+              "type=raw,value=dev-{{sha}}"
+            ]
+          }
+        }
+      }
+    }
+    ```
+
+    Produces: `dev`, `dev-8d9bccc`
+  </Tab>
+</Tabs>
+
+### Tag Placeholders
+
+All version placeholders are available in tags:
+
+- `{{version}}` - Full version (e.g., `1.2.3` or `abc1234`)
+- `{{major}}` - Major version number (e.g., `1`)
+- `{{minor}}` - Minor version (e.g., `1.2`)
+- `{{sha}}` - Short commit SHA (7 characters)
+- `{{fullSha}}` - Full commit SHA (40 characters)
+- `{{name}}` - Application name
+
+## Platform Configuration
+
+Specify which CPU architectures to build for.
+
+### Multi-Platform (Default)
+
+```json
+{
+  "docker": {
+    "platforms": ["linux/amd64", "linux/arm64"]
+  }
+}
+```
+
+Builds for both x86_64 and ARM64 architectures.
+
+### Single Platform
+
+For applications that don't support multi-platform builds:
+
+```json
+{
+  "docker": {
+    "platforms": ["linux/amd64"]
+  }
+}
+```
+
+<Note>
+  Use build scripts (pre.sh) to pre-compile assets for faster multi-platform builds. Building complex applications like Next.js on ARM64 can be very slow.
+</Note>
+
+### Additional Platforms
+
+```json
+{
+  "docker": {
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64",
+      "linux/arm/v7"
+    ]
+  }
+}
+```
+
+## Dockerfile Selection
+
+Specify which Dockerfile to use for building.
+
+### Default Dockerfile
+
+```json
+{
+  "docker": {
+    "file": "Dockerfile"
+  }
+}
+```
+
+### Variant-Specific Dockerfiles
+
+From the `cobalt` app with separate dev Dockerfile:
+
+```json
+{
+  "variants": {
+    "latest": {
+      "docker": {
+        "file": "Dockerfile"
+      }
+    },
+    "dev": {
+      "docker": {
+        "file": "Dockerfile.dev"
+      }
+    }
+  }
+}
+```
+
+Each variant can use a different Dockerfile.
+
+## Real-World Examples
+
+### Example 1: Multi-Variant Base Image
+
+From `base/nginx/meta.json`:
+
+```json
+{
+  "name": "nginx",
+  "type": "base",
+  "description": "Nginx with custom configuration, based on alpine. The root path is /app.",
+  "variants": {
+    "latest": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "vue": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=vue",
+          "type=raw,value={{version}}-vue"
+        ]
+      }
+    },
+    "svelte": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=svelte",
+          "type=raw,value={{version}}-svelte"
+        ]
+      }
+    }
+  }
+}
+```
+
+Produces images:
+- `aliuq/nginx:latest`
+- `aliuq/nginx:0.1.0`
+- `aliuq/nginx:vue`
+- `aliuq/nginx:0.1.0-vue`
+- `aliuq/nginx:svelte`
+- `aliuq/nginx:0.1.0-svelte`
+
+### Example 2: Stable and Development Variants
+
+From `apps/cobalt/meta.json`:
+
+```json
+{
+  "name": "cobalt",
+  "type": "app",
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "sha": "e4b53880af4026b8be6a870ae7d8133f744a6181",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/imputnet/cobalt",
+        "file": "web/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "8d9bccc",
+      "sha": "8d9bccc4fedabb6842fab71bd14e805f1ea21336",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/imputnet/cobalt",
+        "path": "web"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+Produces images:
+- `aliuq/cobalt:latest`
+- `aliuq/cobalt:11.3`
+- `aliuq/cobalt:11`
+- `aliuq/cobalt:dev`
+- `aliuq/cobalt:dev-8d9bccc`
+
+### Example 3: TLS Variant
+
+From `apps/srcbook/meta.json`:
+
+```json
+{
+  "name": "srcbook",
+  "type": "app",
+  "variants": {
+    "latest": {
+      "version": "0.0.19",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/srcbookdev/srcbook",
+        "file": "srcbook/package.json"
+      }
+    },
+    "tls": {
+      "version": "0.0.19",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/srcbookdev/srcbook",
+        "file": "srcbook/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=tls",
+          "type=raw,value={{version}}-tls"
+        ]
+      }
+    }
+  }
+}
+```
+
+Produces images:
+- `aliuq/srcbook:latest`
+- `aliuq/srcbook:0.0.19`
+- `aliuq/srcbook:tls`
+- `aliuq/srcbook:0.0.19-tls`
+
+## Advanced Patterns
+
+### Conditional Variants
+
+Disable variants temporarily:
+
+```json
+{
+  "variants": {
+    "stable": {
+      "enabled": false,
+      "checkver": {
+        "type": "tag",
+        "repo": "owner/repo"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=stable",
+          "type=raw,value={{version}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Version-Specific Builds
+
+For VSCode that tracks upstream tags:
+
+```json
+{
+  "name": "vscode",
+  "type": "base",
+  "variants": {
+    "latest": {
+      "version": "1.109.5",
+      "sha": "072586267e68ece9a47aa43f8c108e0dcbf44622",
+      "checkver": {
+        "type": "tag",
+        "repo": "microsoft/vscode"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "stable": {
+      "version": "1.109.5",
+      "sha": "072586267e68ece9a47aa43f8c108e0dcbf44622",
+      "checkver": {
+        "type": "tag",
+        "repo": "microsoft/vscode"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=stable",
+          "type=raw,value={{version}}-stable"
+        ]
+      }
+    }
+  }
+}
+```
+
+## Testing Docker Configuration
+
+Test your Docker configuration without building:
+
+```bash
+# View Docker metadata
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/myapp \
+  --input build=false \
+  --input notify=false
+```
+
+Test with specific variants:
+
+```bash
+# Test specific variants
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/myapp \
+  --input build=false \
+  --input notify=false \
+  --input variants=latest,dev
+```
+
+## Best Practices
+
+<Steps>
+
+### Use Semantic Tags
+
+Provide multiple tag levels for flexibility:
+
+```json
+{
+  "docker": {
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}",
+      "type=raw,value={{major}}"
+    ]
+  }
+}
+```
+
+Users can choose:
+- `latest` - Always newest
+- `11.3` - Specific version
+- `11` - Major version
+
+### Separate Production and Development
+
+```json
+{
+  "variants": {
+    "latest": {"docker": {"tags": ["type=raw,value=latest"]}},
+    "dev": {"docker": {"tags": ["type=raw,value=dev"]}}
+  }
+}
+```
+
+### Document Variants
+
+In your README, explain what each variant provides:
+
+```markdown
+## Available Tags
+
+- `latest` - Stable release, recommended for production
+- `11.3`, `11` - Specific version tags
+- `dev` - Development version, may be unstable
+- `vue`, `svelte` - Framework-specific configurations
+```
+
+### Platform Optimization
+
+For slow builds, consider single-platform or use pre-build scripts:
+
+```json
+{
+  "docker": {
+    "platforms": ["linux/amd64"]
+  }
+}
+```
+
+Or use pre.sh to build assets once for all platforms.
+
+</Steps>
+
+<Warning>
+  Changing tag patterns can break existing user deployments. Version tag changes carefully and communicate them clearly.
+</Warning>
+
+## Next Steps
+
+- Learn about [Build Scripts](/guides/build-scripts) for complex build processes
+- Explore [Local Testing](/guides/local-testing) to test your configuration
+- Review [Adding Applications](/guides/adding-applications) for complete examples

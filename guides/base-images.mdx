@@ -1,0 +1,445 @@
+---
+title: Creating Base Images
+description: Guide to creating and using reusable base images for application builds
+---
+
+Base images provide foundational layers that multiple applications can build upon, reducing duplication and standardizing common configurations.
+
+## Overview
+
+Base images are stored in the `base/` directory and are used as parent images in application Dockerfiles. They typically include:
+- Common runtime environments
+- Pre-configured web servers
+- Development tools and utilities
+- Standard configurations
+
+## Creating a Base Image
+
+<Steps>
+
+### Create Base Image Directory
+
+Base images follow the same structure as applications but are placed in the `base/` directory:
+
+```bash
+mkdir -p base/your-base
+cd base/your-base
+```
+
+### Define meta.json
+
+Base images use `"type": "base"` in their meta.json:
+
+```json
+{
+  "name": "alpine",
+  "type": "base",
+  "description": "Alpine Linux 3.20",
+  "variants": {
+    "latest": {
+      "version": "3.22.1",
+      "sha": "a274bcf3c7710d34df2b38ae6ac4ab5684d8f72d",
+      "checkver": {
+        "type": "manual"
+      }
+    }
+  }
+}
+```
+
+<Note>
+  Base images typically use `"type": "manual"` for version tracking since they're usually updated intentionally rather than automatically.
+</Note>
+
+### Create Dockerfile
+
+Build your base image with common configurations.
+
+</Steps>
+
+## Examples from the Repository
+
+### Nginx Base Image
+
+The `nginx` base image provides a pre-configured Nginx server with custom configuration.
+
+#### Directory Structure
+
+```
+base/nginx/
+├── Dockerfile
+├── meta.json
+└── conf/
+    └── default.conf
+```
+
+#### meta.json
+
+```json
+{
+  "name": "nginx",
+  "type": "base",
+  "description": "Nginx with custom configuration, based on alpine. The root path is /app.",
+  "variants": {
+    "latest": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "vue": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=vue",
+          "type=raw,value={{version}}-vue"
+        ]
+      }
+    },
+    "svelte": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=svelte",
+          "type=raw,value={{version}}-svelte"
+        ]
+      }
+    }
+  }
+}
+```
+
+#### Dockerfile
+
+```dockerfile
+FROM nginx:alpine
+
+WORKDIR /app
+COPY ./conf/default.conf /etc/nginx/conf.d/default.conf
+
+CMD ["nginx", "-g", "daemon off;"]
+
+EXPOSE 80
+```
+
+#### Configuration File
+
+`conf/default.conf`:
+
+```nginx
+server {
+    listen       80;
+    server_name  localhost;
+
+    location / {
+        root   /app;
+        index  index.html index.htm;
+    }
+
+    error_page   500 502 503 504  /50x.html;
+    location = /50x.html {
+        root   /app;
+    }
+}
+```
+
+### Personal Development Environment
+
+The `self` base image provides a comprehensive development environment.
+
+```json
+{
+  "name": "self",
+  "type": "base",
+  "title": "Personal Development Environment",
+  "description": "个人开发环境基础镜像，集成 Node.js、Python、Zsh、Oh-my-zsh、Starship 等开发工具",
+  "license": "MIT",
+  "variants": {
+    "latest": {
+      "version": "0.1.0",
+      "sha": "162984856e9b0390bfda8b5e20edeea665582b1b",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value=alpine",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "ubuntu": {
+      "version": "0.1.0",
+      "sha": "162984856e9b0390bfda8b5e20edeea665582b1b",
+      "enabled": false,
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=ubuntu",
+          "type=raw,value={{version}}-ubuntu"
+        ]
+      }
+    }
+  }
+}
+```
+
+## Multi-Variant Base Images
+
+Base images can provide multiple variants for different frameworks or use cases. The `nginx` base image is an excellent example:
+
+<Tabs>
+  <Tab title="Usage in Applications">
+    Applications can choose the appropriate variant:
+
+    ```dockerfile
+    # For Vue.js applications
+    FROM aliuq/nginx:vue
+    COPY ./dist /app
+    ```
+
+    ```dockerfile
+    # For Svelte applications
+    FROM aliuq/nginx:svelte
+    COPY ./build /app
+    ```
+
+    ```dockerfile
+    # For generic static sites
+    FROM aliuq/nginx:latest
+    COPY ./public /app
+    ```
+  </Tab>
+  <Tab title="Real Example">
+    From the `icones` app:
+
+    ```dockerfile
+    FROM alpine/git AS source
+    WORKDIR /app
+    ARG VERSION=0bc5918
+    RUN git clone https://github.com/antfu-collective/icones . && git checkout ${VERSION}
+
+    FROM node:22.14.0-alpine3.20 AS build
+    WORKDIR /app
+    COPY --from=source /app .
+    RUN corepack enable && corepack prepare --activate
+    RUN pnpm install && pnpm run build
+
+    FROM aliuq/nginx:vue
+
+    ENV TZ=Asia/Shanghai
+    ENV NODE_ENV=production
+
+    WORKDIR /app
+
+    COPY --from=build /app/dist /app
+
+    CMD ["nginx", "-g", "daemon off;"]
+    EXPOSE 80
+    ```
+  </Tab>
+  <Tab title="Cobalt Example">
+    From the `cobalt` app:
+
+    ```dockerfile
+    FROM aliuq/nginx:svelte
+
+    ENV NODE_ENV=production \
+        BASE_API="https://api.cobalt.tools"
+
+    COPY ./app/web/build /app
+    COPY ./docker-entrypoint.sh /docker-entrypoint.d/00-replace-envs.sh
+
+    RUN chmod +x /docker-entrypoint.d/00-replace-envs.sh
+    ```
+  </Tab>
+</Tabs>
+
+## Using Base Images
+
+### In Application Dockerfiles
+
+Reference base images in your application Dockerfiles:
+
+```dockerfile
+FROM aliuq/nginx:vue
+
+ENV TZ=Asia/Shanghai
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+COPY --from=build /app/dist /app
+
+CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 80
+```
+
+### Image Naming Convention
+
+Base images are published with the same naming pattern as apps:
+- Docker Hub: `aliuq/{name}:{variant}`
+- GitHub Container Registry: `ghcr.io/aliuq/{name}:{variant}`
+
+Examples:
+- `aliuq/nginx:latest`
+- `aliuq/nginx:vue`
+- `aliuq/nginx:svelte`
+- `aliuq/self:alpine`
+- `aliuq/vscode:latest`
+
+## Best Practices
+
+<Steps>
+
+### Keep Base Images Minimal
+
+Only include what's necessary for multiple applications:
+
+```dockerfile
+# Good: Minimal and focused
+FROM nginx:alpine
+WORKDIR /app
+COPY ./conf/default.conf /etc/nginx/conf.d/default.conf
+CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 80
+```
+
+### Use Semantic Versioning
+
+Version your base images semantically:
+- `0.1.0` - Initial version
+- `0.2.0` - Minor updates (backward compatible)
+- `1.0.0` - Major version (breaking changes)
+
+### Document Configuration
+
+Include clear documentation about:
+- Working directory (`/app` for nginx base)
+- Exposed ports
+- Environment variables
+- Configuration file locations
+
+### Provide Variants for Different Use Cases
+
+Create variants when configurations differ significantly:
+
+```json
+{
+  "variants": {
+    "latest": {"docker": {"tags": ["type=raw,value=latest"]}},
+    "vue": {"docker": {"tags": ["type=raw,value=vue"]}},
+    "svelte": {"docker": {"tags": ["type=raw,value=svelte"]}}
+  }
+}
+```
+
+</Steps>
+
+## Version Management
+
+### Manual Version Control
+
+Base images typically use manual versioning:
+
+```json
+{
+  "checkver": {
+    "type": "manual"
+  }
+}
+```
+
+Update versions when you make changes:
+1. Modify the Dockerfile or configuration
+2. Update `version` and `sha` in meta.json
+3. Commit and push changes
+4. GitHub Actions will build and publish the new version
+
+### Tracking Upstream
+
+For base images that track upstream projects (like VSCode):
+
+```json
+{
+  "name": "vscode",
+  "checkver": {
+    "type": "tag",
+    "repo": "microsoft/vscode"
+  }
+}
+```
+
+<Tip>
+  Use automatic version tracking for base images that closely follow upstream releases.
+</Tip>
+
+## Testing Base Images
+
+Test base images before applications that depend on them:
+
+<CodeGroup>
+```bash Check Version
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=base/nginx
+```
+
+```bash Build Test
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=base/nginx \
+  --input variants=latest,vue,svelte
+```
+</CodeGroup>
+
+## Common Use Cases
+
+### Web Server Base Images
+
+Pre-configured web servers for static sites:
+- Nginx for Vue, React, Svelte apps
+- Apache for specific frameworks
+- Caddy for automatic HTTPS
+
+### Runtime Environment Base Images
+
+Standardized runtime environments:
+- Node.js with specific versions
+- Python with common packages
+- Multi-language development environments
+
+### Tool Base Images
+
+Development and debugging tools:
+- Code editors (VSCode)
+- Database clients
+- Network debugging tools
+
+<Warning>
+  When updating a base image, test all applications that depend on it to ensure compatibility.
+</Warning>
+
+## Next Steps
+
+- Learn about [Adding Applications](/guides/adding-applications) that use base images
+- Explore [Build Scripts](/guides/build-scripts) for complex base image builds
+- Configure [Docker Settings](/guides/docker-configuration) for advanced scenarios

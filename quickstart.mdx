@@ -1,80 +1,433 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get started with Apps Image in minutes - deploy pre-built images or add your own applications
 ---
 
-## Get started in three steps
+# Quick Start Guide
 
-Get your documentation site running locally and make your first customization.
+Get up and running with Apps Image in just a few minutes. This guide will show you how to use existing images and add a new application to the repository.
 
-### Step 1: Set up your local environment
+## Using Pre-built Images
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+All Apps Image containers are available on Docker Hub and ready to deploy. Let's start with a simple example.
 
-### Step 2: Deploy your changes
+### Deploy Icones (Icon Explorer)
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Pull and run the image">
+    The simplest way to get started is to pull and run an existing image:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```bash
+    docker run -d --name icones -p 8080:80 aliuq/icones:latest
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    This command:
+    - Pulls the `aliuq/icones:latest` image from Docker Hub
+    - Runs it in detached mode (`-d`)
+    - Names the container `icones`
+    - Maps port 8080 on your host to port 80 in the container
+  </Step>
 
-### Step 3: Go live
+  <Step title="Access the application">
+    Open your browser and navigate to:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```
+    http://localhost:8080
+    ```
 
-## Next steps
+    You should see the Icones icon explorer running!
+  </Step>
 
-Now that you have your docs running, explore these key features:
+  <Step title="Stop and remove (optional)">
+    When you're done testing:
+
+    ```bash
+    docker stop icones
+    docker rm icones
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  For a quick test without naming the container, use:
+  ```bash
+  docker run --rm --name icones -p 8080:80 aliuq/icones:latest
+  ```
+  The `--rm` flag automatically removes the container when it stops.
+</Tip>
+
+### Using Docker Compose
+
+For production deployments, Docker Compose is recommended:
+
+<Steps>
+  <Step title="Create docker-compose.yml">
+    Create a `docker-compose.yml` file:
+
+    ```yaml
+    name: icones
+    services:
+      icones:
+        image: aliuq/icones:latest
+        container_name: icones
+        restart: unless-stopped
+        ports:
+          - '8080:80'
+    ```
+  </Step>
+
+  <Step title="Start the service">
+    ```bash
+    docker-compose up -d
+    ```
+  </Step>
+
+  <Step title="View logs (optional)">
+    ```bash
+    docker-compose logs -f
+    ```
+  </Step>
+</Steps>
+
+## Adding a New Application
+
+Let's walk through adding a new application to the Apps Image repository. We'll use a simple example to demonstrate the process.
+
+### Example: Adding WeekToDo
+
+<Steps>
+  <Step title="Create the application directory">
+    Clone the repository and create a directory for your application:
+
+    ```bash
+    git clone https://github.com/aliuq/apps-image.git
+    cd apps-image
+    mkdir -p apps/weektodo
+    cd apps/weektodo
+    ```
+
+    <Note>
+      Use `apps/` for application images and `base/` for base images that other applications might extend.
+    </Note>
+  </Step>
+
+  <Step title="Create meta.json">
+    Create a `meta.json` file to define the application metadata and version tracking:
+
+    ```json
+    {
+      "name": "weektodo",
+      "type": "app",
+      "title": "WeekToDo | FOSS Minimalist Weekly Planner",
+      "slogan": "每周任务管理工具，高效规划待办事项",
+      "description": "WeekToDo is a Free and Open Source Minimalist Weekly Planner and To Do list App focused on privacy. Available for Windows, Mac, Linux or online.",
+      "license": "GPL-3.0 license",
+      "variants": {
+        "latest": {
+          "version": "2.2.0",
+          "sha": "0296d299bd819e5cf31cf993bad9482fd7787981",
+          "checkver": {
+            "type": "version",
+            "repo": "https://github.com/manuelernestog/weektodo",
+            "file": "package.json"
+          }
+        }
+      }
+    }
+    ```
+
+    **Key fields:**
+    - `name` - Image name (will be `aliuq/weektodo`)
+    - `type` - Either `app` or `base`
+    - `variants` - Different versions or configurations
+    - `checkver.type` - Version strategy: `version`, `sha`, or `manual`
+    - `checkver.repo` - Upstream GitHub repository
+    - `checkver.file` - File to check for version (for `type: version`)
+  </Step>
+
+  <Step title="Create the Dockerfile">
+    Create a `Dockerfile` with version placeholders:
+
+    ```dockerfile
+    FROM alpine/git AS base
+    WORKDIR /app
+    ARG VERSION=0296d29
+    RUN git clone https://github.com/manuelernestog/weektodo . && git checkout ${VERSION}
+
+    FROM node:16.20.2-alpine3.18 AS builder
+    WORKDIR /app
+    COPY --from=base /app .
+    RUN yarn install --frozen-lockfile --network-timeout 600000
+    RUN yarn run build
+
+    FROM nginx:1.21.3-alpine
+
+    WORKDIR /usr/share/nginx/html
+    COPY --from=builder /app/dist /usr/share/nginx/html
+
+    EXPOSE 80
+    ```
+
+    <Warning>
+      The `VERSION` argument uses the short SHA by default. During build, `{{version}}` and `{{sha}}` placeholders in the Dockerfile are automatically replaced.
+    </Warning>
+
+    **Available placeholders:**
+    - `{{version}}` - Full version string (e.g., `1.2.3`)
+    - `{{major}}` - Major version only (e.g., `1`)
+    - `{{minor}}` - Major.minor version (e.g., `1.2`)
+    - `{{sha}}` - Short commit SHA (7 characters)
+    - `{{fullSha}}` - Full commit SHA (40 characters)
+  </Step>
+
+  <Step title="Create README.md (optional but recommended)">
+    Add documentation for users:
+
+    ```markdown
+    # WeekToDo
+
+    > A Free and Open Source Minimalist Weekly Planner
+
+    ## Quick Start
+
+    ### Using Docker
+
+    ```bash
+    docker run -d --name weektodo -p 8080:80 aliuq/weektodo:latest
+    ```
+
+    Visit `http://localhost:8080`
+
+    ### Using Docker Compose
+
+    ```yaml
+    name: weektodo
+    services:
+      weektodo:
+        image: aliuq/weektodo:latest
+        container_name: weektodo
+        restart: unless-stopped
+        ports:
+          - '8080:80'
+    ```
+    ```
+  </Step>
+
+  <Step title="Test the build locally">
+    Before committing, test your Dockerfile:
+
+    ```bash
+    # Build the image
+    docker buildx build -f ./Dockerfile -t weektodo:local --load .
+
+    # Test run
+    docker run --rm --name weektodo-test -p 8080:80 weektodo:local
+    ```
+
+    Access `http://localhost:8080` to verify it works.
+  </Step>
+
+  <Step title="Commit and push">
+    ```bash
+    git add apps/weektodo/
+    git commit -m "add: WeekToDo application"
+    git push origin main
+    ```
+
+    The GitHub Actions workflow will automatically:
+    - Detect the new application
+    - Build multi-platform images
+    - Push to Docker Hub and other registries
+  </Step>
+</Steps>
+
+## Advanced Example: Application with Pre-build Hook
+
+For complex applications like Next.js apps, you might need to pre-build assets before Docker builds. Here's an example with **ray.so**:
+
+<Steps>
+  <Step title="Create meta.json">
+    ```json
+    {
+      "name": "rayso",
+      "type": "app",
+      "title": "ray.so",
+      "description": "Create code snippets, browse AI prompts, create extension icons and more.",
+      "license": "MIT",
+      "variants": {
+        "latest": {
+          "version": "73fac26",
+          "sha": "73fac26b0f184b57ebacd37da95721210a49e1dc",
+          "checkver": {
+            "type": "sha",
+            "repo": "raycast/ray-so"
+          }
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Create pre.sh build script">
+    ```bash
+    #!/bin/bash
+
+    set -euxo pipefail
+
+    VERSION="73fac26"
+
+    # Clone the repository
+    mkdir -p app && cd app
+    git clone --depth=1 https://github.com/raycast/ray-so . && git checkout $VERSION
+
+    # Configure Next.js for standalone output
+    if ! grep -q 'output:' next.config.js; then
+      sed -i '/const nextConfig = {/a\  output: "standalone",' next.config.js;
+    else
+      sed -i 's/output: .*/output: "standalone",/' next.config.js;
+    fi
+
+    # Install Bun and Node.js
+    mise use bun@latest node@lts -g
+
+    # Build the application
+    bun install --no-cache && bun run build
+    ```
+
+    <Tip>
+      Pre-build scripts are especially useful for multi-platform builds where building on ARM64 is slow. You can build on x86 in the script, then copy artifacts in the Dockerfile.
+    </Tip>
+  </Step>
+
+  <Step title="Create simplified Dockerfile">
+    ```dockerfile
+    FROM node:24-alpine AS runner
+
+    WORKDIR /app
+
+    ENV NODE_ENV=production \
+        NEXT_TELEMETRY_DISABLED=1 \
+        PORT=3000 \
+        HOSTNAME="0.0.0.0"
+
+    RUN addgroup --system --gid 1001 nodejs && \
+        adduser --system --uid 1001 nextjs && \
+        mkdir -p .next && \
+        chown -R nextjs:nodejs /app
+
+    USER nextjs
+
+    # Copy pre-built assets from pre.sh
+    COPY --chown=nextjs:nodejs ./app/public ./public
+    COPY --chown=nextjs:nodejs ./app/.next/standalone/apps/rayso/app ./
+    COPY --chown=nextjs:nodejs ./app/.next/static ./.next/static
+
+    EXPOSE 3000
+
+    CMD ["node", "server.js"]
+    ```
+  </Step>
+</Steps>
+
+## Testing Locally with act
+
+You can test GitHub Actions workflows locally before pushing:
+
+### Check Version Workflow
+
+```bash
+# Check single application
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/icones
+
+# Check multiple applications
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=apps/icones,apps/rayso
+
+# Check all applications
+act workflow_dispatch -W .github/workflows/check-version.yaml \
+  --input debug=true \
+  --input context=all
+```
+
+### Build Image Workflow
+
+```bash
+# Dry run: view docker metadata only
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/icones \
+  --input build=false \
+  --input notify=false
+
+# Full build: includes image building
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/icones
+
+# Build specific variants
+act workflow_dispatch -W .github/workflows/build-test.yaml \
+  --input debug=true \
+  --input context=apps/icones \
+  --input variants=latest,dev
+```
+
+## Version Checking Strategies
+
+Apps Image supports three version checking strategies:
+
+### 1. Semantic Version (`type: version`)
+
+Checks a JSON file (usually `package.json`) in the upstream repository:
+
+```json
+"checkver": {
+  "type": "version",
+  "repo": "https://github.com/manuelernestog/weektodo",
+  "file": "package.json"
+}
+```
+
+### 2. Commit SHA (`type: sha`)
+
+Tracks the latest commit SHA from the default branch:
+
+```json
+"checkver": {
+  "type": "sha",
+  "repo": "https://github.com/antfu-collective/icones"
+}
+```
+
+### 3. Manual (`type: manual`)
+
+No automatic checking - you update versions manually:
+
+```json
+"checkver": {
+  "type": "manual"
+}
+```
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Explore Available Images" icon="docker" href="https://hub.docker.com/u/aliuq">
+    Browse the complete catalog on Docker Hub
+  </Card>
+  <Card title="Advanced Configuration" icon="gears" href="/guides/docker-configuration">
+    Learn about Docker config, tags, and multi-platform builds
+  </Card>
+  <Card title="GitHub Actions" icon="github" href="/automation/workflows">
+    Deep dive into the automation workflows
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="https://github.com/aliuq/apps-image">
+    Contribute to the project on GitHub
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Need help? Check out the [GitHub repository](https://github.com/aliuq/apps-image) or open an issue.
 </Note>

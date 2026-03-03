@@ -1,0 +1,575 @@
+---
+title: Build Scripts
+description: Using pre.sh and post.sh scripts for custom build processes
+---
+
+Build scripts allow you to customize the build process before and after Docker image creation. They're especially useful for multi-platform builds where certain steps (like building Next.js apps on arm64) can be very slow.
+
+## Overview
+
+The build system supports two types of scripts:
+- `pre.sh` - Runs before Docker build, typically for building assets
+- `post.sh` - Runs after Docker build, for additional processing
+
+<Tip>
+  Pre-build scripts are particularly valuable for web applications. Building Next.js apps on arm64 is very slow, so you can pre-build assets once and copy them in the Dockerfile for all platforms.
+</Tip>
+
+## Pre-Build Scripts (pre.sh)
+
+Pre-build scripts run before the Docker build process. They're ideal for:
+- Cloning and building source code
+- Compiling assets that work across platforms
+- Generating files needed by the Dockerfile
+- Installing build-time dependencies
+
+### Basic Structure
+
+All pre-build scripts should start with:
+
+```bash
+#!/bin/bash
+
+set -euxo pipefail
+
+VERSION="{{version}}"
+```
+
+#### Script Options Explained
+
+- `-e` - Exit immediately if a command returns a non-zero status
+- `-u` - Exit immediately when attempting to use an unset variable
+- `-x` - Print each command to standard output as it is executed
+- `-o pipefail` - Pipeline fails if any command in it fails
+
+<Warning>
+  Always use `set -euxo pipefail` to ensure your build fails fast on errors and provides clear debugging output.
+</Warning>
+
+### Available Placeholders
+
+The following placeholders are automatically replaced in your scripts:
+
+- `{{version}}` - Version string (e.g., `1.2.3` or `73fac26`)
+- `{{sha}}` - Short commit SHA (7 characters)
+- `{{fullSha}}` - Full commit SHA (40 characters)
+- `{version}` - Alternative syntax
+- `$version$` - Alternative syntax
+
+## Real-World Examples
+
+### Next.js Application (rayso)
+
+From `apps/rayso/pre.sh` - builds a Next.js app with standalone output:
+
+```bash
+#!/bin/bash
+
+set -euxo pipefail
+
+VERSION="73fac26"
+
+# Clone the repository
+mkdir -p app && cd app
+git clone --depth=1 https://github.com/raycast/ray-so . && git checkout $VERSION
+
+# Configure Next.js for standalone output
+if ! grep -q 'output:' next.config.js; then
+  sed -i '/const nextConfig = {/a\  output: "standalone",' next.config.js;
+else
+  sed -i 's/output: .*/output: "standalone",/' next.config.js;
+fi
+
+# Install Bun and Node.js
+mise use bun@latest node@lts -g
+
+# Build the application
+bun install --no-cache && bun run build
+```
+
+Corresponding `apps/rayso/Dockerfile`:
+
+```dockerfile
+FROM node:24-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0"
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs && \
+    mkdir -p .next && \
+    chown -R nextjs:nodejs /app
+
+USER nextjs
+
+COPY --chown=nextjs:nodejs ./app/public ./public
+COPY --chown=nextjs:nodejs ./app/.next/standalone/apps/rayso/app ./
+COPY --chown=nextjs:nodejs ./app/.next/static ./.next/static
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
+```
+
+<Note>
+  The pre.sh script builds the app once, then the Dockerfile simply copies the pre-built assets. This approach works great for multi-platform builds.
+</Note>
+
+### Svelte Application (cobalt)
+
+From `apps/cobalt/pre.sh` - builds a Svelte app with SvelteKit:
+
+```bash
+#!/bin/bash
+
+set -euxo pipefail
+
+VERSION="e4b5388"
+
+# Clone the repository
+mkdir -p app && cd app
+git clone https://github.com/imputnet/cobalt . && git checkout $VERSION
+rm -rf .git
+
+mise use pnpm -g
+corepack enable && corepack prepare --activate
+pnpm install --frozen-lockfile
+WEB_DEFAULT_API=\$BASE_API pnpm -C web build
+
+mise cache clear
+rm -rf node_modules .next/server
+```
+
+Corresponding `apps/cobalt/Dockerfile`:
+
+```dockerfile
+FROM aliuq/nginx:svelte
+
+ENV NODE_ENV=production \
+    BASE_API="https://api.cobalt.tools"
+
+COPY ./app/web/build /app
+COPY ./docker-entrypoint.sh /docker-entrypoint.d/00-replace-envs.sh
+
+RUN chmod +x /docker-entrypoint.d/00-replace-envs.sh
+```
+
+<Tabs>
+  <Tab title="Key Techniques">
+    **Environment Variable Placeholders**
+    
+    ```bash
+    WEB_DEFAULT_API=\$BASE_API pnpm -C web build
+    ```
+    
+    The `\$BASE_API` escapes the variable so it's not expanded during build, allowing runtime substitution via docker-entrypoint.sh.
+
+    **Cleanup**
+    
+    ```bash
+    mise cache clear
+    rm -rf node_modules .next/server
+    ```
+    
+    Remove build artifacts that aren't needed in the final image to reduce size.
+  </Tab>
+  <Tab title="docker-entrypoint.sh">
+    From `apps/cobalt/docker-entrypoint.sh` - replaces environment variables at runtime:
+
+    ```bash
+    #!/bin/sh
+
+    set -e
+
+    ME=$(basename "$0")
+
+    entrypoint_log() {
+      if [ -z "${NGINX_ENTRYPOINT_QUIET_LOGS:-}" ]; then
+        echo "$@"
+      fi
+    }
+
+    auto_envsubst() {
+      local filter="${NGINX_ENVSUBST_FILTER:-}"
+
+      defined_envs=$(printf '${%s} ' $(awk "END { for (name in ENVIRON) { print ( name ~ /${filter}/ ) ? name : \"\" } }" </dev/null))
+
+      entrypoint_log "$ME: Replacing……"
+      find "/app" -follow -type f -name "*.js" -print | while read -r template; do
+        envsubst "$defined_envs" <"$template" >"$template.1"
+        mv "$template.1" "$template"
+      done
+    }
+
+    auto_envsubst
+
+    exit 0
+    ```
+  </Tab>
+</Tabs>
+
+### Complex Monorepo Build (readest)
+
+From `apps/readest/pre.sh` - demonstrates advanced techniques:
+
+```bash
+#!/bin/bash
+
+set -euxo pipefail
+
+VERSION="v0.9.101"
+
+# Store the current working directory to return back later
+old_pwd=$(pwd)
+# Use the top-level directory for avoid standalone output issues with Next.js,
+# and copy the built files to the correct location in the Dockerfile
+sudo mkdir -p /readest
+sudo chown -R $USER:$USER /readest
+cd /readest
+# Clone the repository
+git clone -b $VERSION --recurse-submodules https://github.com/readest/readest .
+rm -rf .git
+
+# Copy the variables starting with `NEXT_PUBLIC_` from
+# `/app/apps/readest-app/.env.local.example` to /app/apps/readest-app/.env.local,
+# and set their values as environment variable placeholders in the format `KEY=\$KEY`.
+env_source=./apps/readest-app/.env.local.example
+env_target=./apps/readest-app/.env.local
+# awk: cmd. line:1: warning: escape sequence `\$' treated as plain `$'
+awk -F= '/^NEXT_PUBLIC_/ && $1 != "" { printf "%s=\\$%s\n", $1, $1 }' $env_source >> $env_target
+
+# Replace `NEXT_PUBLIC_SUPABASE_URL` to `https://your-supabase-url.com` placeholder for
+# avoid `Invalid URL` error during build
+sed -i 's|^NEXT_PUBLIC_SUPABASE_URL=.*$|NEXT_PUBLIC_SUPABASE_URL=https://your-supabase-url.com|' $env_target
+
+export CI=true
+export NODE_ENV=production
+
+# Configure Next.js for standalone output
+next_config=./apps/readest-app/next.config.mjs
+if ! grep -q 'output:' $next_config; then
+  sed -i '/const nextConfig = {/a\  output: "standalone",' $next_config;
+else
+  sed -i 's/output: .*/output: "standalone",/' $next_config;
+fi
+
+# Install pnpm
+mise use node@lts pnpm@10 -g
+
+# Install dependencies and build the application
+pnpm install --frozen-lockfile
+
+# Setup vendors and build
+pnpm --filter @readest/readest-app setup-vendors
+pnpm --filter=@readest/readest-app setup-pdfjs
+pnpm --filter=@readest/readest-app build-web
+
+# Replace `https://your-supabase-url.com` in `.next` js files with environment variable
+find ./apps/readest-app/.next \
+  -path "*/node_modules/*" -prune -o \
+  -name "*.js" \
+  -exec sed -i "s|https://your-supabase-url.com|\$NEXT_PUBLIC_SUPABASE_URL|g" {} +
+
+# Clean up build artifacts to reduce image size
+rm -rf ./apps/readest-app/.next/cache
+
+# Copy the built files to the correct location for the Dockerfile
+cd $old_pwd
+mkdir -p app
+cp -r /readest/apps/readest-app/.next ./app/.next
+cp -r /readest/apps/readest-app/public ./app/public
+sudo rm -rf /readest
+```
+
+<Steps>
+
+### Advanced Techniques Demonstrated
+
+**Working Directory Management**
+
+```bash
+old_pwd=$(pwd)
+sudo mkdir -p /readest
+cd /readest
+# ... build process ...
+cd $old_pwd
+```
+
+Build in a different directory to avoid Next.js standalone output issues, then copy results back.
+
+**Environment Variable Generation**
+
+```bash
+awk -F= '/^NEXT_PUBLIC_/ && $1 != "" { printf "%s=\\$%s\n", $1, $1 }' $env_source >> $env_target
+```
+
+Automatically create environment variable placeholders from example files.
+
+**Build-Time URL Replacement**
+
+```bash
+sed -i 's|^NEXT_PUBLIC_SUPABASE_URL=.*$|NEXT_PUBLIC_SUPABASE_URL=https://your-supabase-url.com|' $env_target
+```
+
+Use placeholder URLs during build to avoid validation errors.
+
+**Runtime URL Replacement**
+
+```bash
+find ./apps/readest-app/.next \
+  -path "*/node_modules/*" -prune -o \
+  -name "*.js" \
+  -exec sed -i "s|https://your-supabase-url.com|\$NEXT_PUBLIC_SUPABASE_URL|g" {} +
+```
+
+Replace placeholder URLs with environment variables for runtime configuration.
+
+**Monorepo Filtering**
+
+```bash
+pnpm --filter @readest/readest-app setup-vendors
+pnpm --filter=@readest/readest-app setup-pdfjs
+pnpm --filter=@readest/readest-app build-web
+```
+
+Use pnpm workspace filtering for monorepo builds.
+
+</Steps>
+
+### Icon Browser (dashboard-icons)
+
+From `apps/dashboard-icons/pre.sh` - demonstrates environment configuration:
+
+```bash
+#!/bin/bash
+
+set -euxo pipefail
+
+VERSION="60c85d2"
+
+# Clone the repository
+mkdir -p app && cd app
+git clone --depth=1 https://github.com/homarr-labs/dashboard-icons . && git checkout $VERSION
+rm -rf .git
+
+# Set up environment variables
+export NEXT_PUBLIC_DISABLE_POSTHOG="true"
+export NEXT_TELEMETRY_DISABLED=1
+export CI_MODE=true
+export NODE_ENV=production
+
+cd web
+mise trust .
+mise install
+mise use bun@latest -g
+
+# Install dependencies
+bun install
+
+# Build the application
+bun run build
+
+# Clean unused files to avoid trigger github actions dist size limit
+# System.IO.IOException: No space left on device
+mise cache clear
+rm -rf node_modules .next/server
+```
+
+<Note>
+  Disable telemetry and analytics in build environments to speed up builds and respect privacy.
+</Note>
+
+## Best Practices
+
+<Steps>
+
+### Use Proper Error Handling
+
+```bash
+#!/bin/bash
+set -euxo pipefail  # Always include this
+```
+
+### Clean Up Build Artifacts
+
+```bash
+# Remove unnecessary files to reduce size
+mise cache clear
+rm -rf node_modules
+rm -rf .next/cache
+rm -rf .git
+```
+
+### Use Version Variables
+
+```bash
+VERSION="{{version}}"
+git checkout $VERSION
+```
+
+Never hardcode versions - use placeholders that are replaced during build.
+
+### Optimize for Multi-Platform
+
+```bash
+# Build once in pre.sh (platform-independent)
+bun install && bun run build
+
+# Then copy in Dockerfile (fast for all platforms)
+COPY ./app/.next ./app/.next
+```
+
+### Use Shallow Clones
+
+```bash
+git clone --depth=1 https://github.com/owner/repo .
+```
+
+Shallow clones are faster and use less disk space.
+
+### Lock Dependencies
+
+```bash
+pnpm install --frozen-lockfile
+yarn install --frozen-lockfile
+bun install --no-cache
+```
+
+Ensure reproducible builds by locking dependencies.
+
+</Steps>
+
+## Development Variants
+
+You can create separate build scripts for development variants:
+
+<CodeGroup>
+```bash pre.sh
+#!/bin/bash
+set -euxo pipefail
+VERSION="{{version}}"
+
+# Production build
+mkdir -p app && cd app
+git clone https://github.com/imputnet/cobalt . && git checkout $VERSION
+pnpm install --frozen-lockfile
+WEB_DEFAULT_API=\$BASE_API pnpm -C web build
+```
+
+```bash pre.dev.sh
+#!/bin/bash
+set -euxo pipefail
+VERSION="{{version}}"
+
+# Development build
+mkdir -p app && cd app
+git clone https://github.com/imputnet/cobalt . && git checkout $VERSION
+pnpm install --frozen-lockfile
+WEB_DEFAULT_API=\$BASE_API pnpm -C web build:dev
+```
+</CodeGroup>
+
+Configure the variant in meta.json to use the development script:
+
+```json
+{
+  "variants": {
+    "dev": {
+      "version": "8d9bccc",
+      "docker": {
+        "file": "Dockerfile.dev"
+      }
+    }
+  }
+}
+```
+
+## Common Patterns
+
+### Package Manager Selection
+
+<CodeGroup>
+```bash npm
+npm install --frozen-lockfile
+npm run build
+```
+
+```bash yarn
+yarn install --frozen-lockfile --network-timeout 600000
+yarn run build
+```
+
+```bash pnpm
+mise use pnpm -g
+corepack enable && corepack prepare --activate
+pnpm install --frozen-lockfile
+pnpm run build
+```
+
+```bash bun
+mise use bun@latest -g
+bun install --no-cache
+bun run build
+```
+</CodeGroup>
+
+### Configuration File Modification
+
+```bash
+# Add configuration if not present
+if ! grep -q 'output:' next.config.js; then
+  sed -i '/const nextConfig = {/a\  output: "standalone",' next.config.js;
+else
+  sed -i 's/output: .*/output: "standalone",/' next.config.js;
+fi
+```
+
+### Tool Installation with mise
+
+```bash
+# Install specific versions
+mise use node@lts pnpm@10 -g
+
+# Install latest versions
+mise use bun@latest node@lts -g
+
+# Trust and install from .mise.toml
+mise trust .
+mise install
+```
+
+## Post-Build Scripts (post.sh)
+
+Post-build scripts run after the Docker image is built. They're less common but useful for:
+- Pushing to additional registries
+- Running image security scans
+- Generating SBOMs
+- Notifying external systems
+
+<Warning>
+  Post-build scripts have access to the built Docker image but cannot modify it. Use them for external actions only.
+</Warning>
+
+## Debugging Build Scripts
+
+The `-x` flag in `set -euxo pipefail` prints each command as it executes:
+
+```bash
++ VERSION=73fac26
++ mkdir -p app
++ cd app
++ git clone --depth=1 https://github.com/raycast/ray-so .
++ git checkout 73fac26
+```
+
+This output helps debug build failures by showing exactly which command failed.
+
+## Next Steps
+
+- Learn about [Docker Configuration](/guides/docker-configuration) for advanced image settings
+- Explore [Local Testing](/guides/local-testing) to test your build scripts
+- Review [Adding Applications](/guides/adding-applications) for complete examples

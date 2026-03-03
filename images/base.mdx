@@ -1,0 +1,279 @@
+---
+title: Base Images
+description: Catalog of foundational base Docker images for development environments and deployment
+---
+
+## Available Base Images
+
+This page catalogs all 5 base images that provide foundational environments for development and deployment. These images are designed to be used as building blocks for other containers or as standalone development environments.
+
+<CardGroup cols={2}>
+  <Card title="Alpine Linux" icon="mountain" href="https://alpinelinux.org">
+    Lightweight base system
+  </Card>
+  <Card title="Nginx" icon="server" href="#nginx">
+    Optimized web server
+  </Card>
+  <Card title="Personal Dev Environment" icon="terminal" href="#personal-development-environment">
+    Complete development setup
+  </Card>
+  <Card title="VS Code Server" icon="code" href="https://github.com/microsoft/vscode">
+    Browser-based code editor
+  </Card>
+  <Card title="Telegram Session" icon="message" href="#telegram-session-generator">
+    Session string generator
+  </Card>
+</CardGroup>
+
+## System Base Images
+
+### Alpine Linux
+
+**Description**: Alpine Linux 3.20
+
+**Available Variants**:
+- `latest` - Version 3.22.1
+
+**Docker Pull**:
+```bash
+docker pull aliuq/alpine:latest
+```
+
+**Use Case**: Minimal base image for building lightweight containers. Alpine Linux is known for its small size and security.
+
+<Accordion title="Why Alpine?">
+Alpine Linux is a security-oriented, lightweight Linux distribution based on musl libc and busybox. It's ideal for:
+- Reducing container image sizes
+- Minimizing attack surface
+- Fast deployment and startup times
+- Resource-constrained environments
+</Accordion>
+
+---
+
+## Web Server Images
+
+### Nginx
+
+**Description**: Nginx with custom configuration, based on alpine. The root path is /app.
+
+**Available Variants**:
+- `latest`, `0.1.0` - Standard configuration
+- `vue`, `0.1.0-vue` - Optimized for Vue.js applications
+- `svelte`, `0.1.0-svelte` - Optimized for Svelte applications
+
+**Docker Pull**:
+```bash
+# Standard Nginx
+docker pull aliuq/nginx:latest
+
+# Vue.js optimized
+docker pull aliuq/nginx:vue
+
+# Svelte optimized
+docker pull aliuq/nginx:svelte
+```
+
+**Features**:
+- Custom Nginx configuration
+- Alpine-based for minimal size
+- Pre-configured `/app` root directory
+- Framework-specific variants for optimal serving
+
+<Accordion title="Framework Variants">
+The framework-specific variants include optimized configurations for:
+- **Vue**: Proper handling of Vue Router history mode
+- **Svelte**: Optimized for SvelteKit applications
+
+These variants ensure your single-page applications work correctly with client-side routing.
+</Accordion>
+
+---
+
+## Development Environment Images
+
+### Personal Development Environment
+
+**Title**: Personal Development Environment
+
+**Description**: 个人开发环境基础镜像，集成 Node.js、Python、Zsh、Oh-my-zsh、Starship 等开发工具
+
+**License**: MIT
+
+**Available Variants**:
+- `latest`, `alpine`, `0.1.0` - Alpine-based environment
+- `ubuntu`, `0.1.0-ubuntu` - Ubuntu-based environment (currently disabled)
+
+**Docker Pull**:
+```bash
+docker pull aliuq/self:latest
+```
+
+**Included Tools**:
+- Node.js - JavaScript runtime
+- Python - Python interpreter
+- Zsh - Enhanced shell
+- Oh-my-zsh - Zsh framework
+- Starship - Cross-shell prompt
+
+<Accordion title="What's Included?">
+This image provides a complete development environment with:
+- **Languages**: Node.js and Python pre-installed
+- **Shell**: Zsh with Oh-my-zsh for enhanced productivity
+- **Prompt**: Starship for a beautiful, informative command prompt
+- **Tools**: Essential development utilities
+
+Perfect for consistent development environments across teams or for quick prototyping.
+</Accordion>
+
+<Note>
+The Ubuntu variant is currently disabled. Use the Alpine-based variant for the best experience.
+</Note>
+
+---
+
+### VS Code Server
+
+**Description**: Visual Studio Code is a free source-code editor made by Microsoft for Windows, Linux and macOS.
+
+**License**: MIT
+
+**Available Variants**:
+- `latest`, `1.109.5` - Latest version
+- `stable`, `1.109.5-stable` - Stable release
+
+**Docker Pull**:
+```bash
+docker pull aliuq/vscode:latest
+```
+
+**Source**: [https://github.com/microsoft/vscode](https://github.com/microsoft/vscode)
+
+**Features**:
+- Full VS Code experience in browser
+- Remote development capabilities
+- Extension support
+- Integrated terminal
+
+<Accordion title="Use Cases">
+VS Code Server enables:
+- **Remote Development**: Code from any device with a browser
+- **Consistent Environments**: Same setup across all developers
+- **Cloud Development**: Develop in the cloud, access from anywhere
+- **Training & Education**: Provide standardized coding environments
+</Accordion>
+
+---
+
+## Specialized Utility Images
+
+### Telegram Session Generator
+
+**Description**: A Telegram session string generator with QR code login support. This tool helps you generate session strings for Telegram applications.
+
+**License**: MIT
+
+**Available Variants**:
+- `latest` - Version 0.1.1
+
+**Docker Pull**:
+```bash
+docker pull aliuq/tg-session:latest
+```
+
+**Features**:
+- QR code login support
+- Session string generation
+- Easy integration with Telegram client applications
+
+<Accordion title="What are Session Strings?">
+Telegram session strings are authentication tokens that allow applications to:
+- Connect to Telegram without repeated logins
+- Automate Telegram interactions
+- Run bots and services with user accounts
+
+This tool simplifies the process of generating these session strings securely.
+</Accordion>
+
+<Note>
+Session strings should be kept secure and never shared publicly, as they provide full access to your Telegram account.
+</Note>
+
+---
+
+## Using Base Images
+
+### As Parent Images
+
+Base images are commonly used as parent images in Dockerfiles:
+
+```dockerfile
+# Using Alpine as base
+FROM aliuq/alpine:latest
+RUN apk add --no-cache your-package
+
+# Using Nginx for a web app
+FROM aliuq/nginx:vue
+COPY dist/ /app/
+
+# Using dev environment
+FROM aliuq/self:latest
+WORKDIR /workspace
+COPY . .
+```
+
+### As Development Environments
+
+Run base images directly for development:
+
+```bash
+# Start a dev environment
+docker run -it -v $(pwd):/workspace aliuq/self:latest
+
+# Run VS Code Server
+docker run -p 8080:8080 aliuq/vscode:latest
+
+# Generate Telegram session
+docker run -it aliuq/tg-session:latest
+```
+
+## Comparison Guide
+
+<Accordion title="Choosing the Right Base Image">
+| Image | Best For | Size | Complexity |
+|-------|----------|------|------------|
+| Alpine | Minimal containers | Smallest | Low |
+| Nginx | Static sites, SPAs | Small | Low |
+| Self | Full development | Medium | Medium |
+| VS Code | Remote development | Large | High |
+| TG Session | Telegram tools | Small | Low |
+</Accordion>
+
+<Accordion title="Version Management">
+Base images follow these versioning strategies:
+
+- **Alpine**: Tracks Alpine Linux releases
+- **Nginx**: Manual versioning for stability
+- **Self**: Manual versioning for controlled updates
+- **VS Code**: Automatically tracks VS Code releases
+- **TG Session**: Manual versioning
+
+The `latest` tag always points to the most recent stable version.
+</Accordion>
+
+## Best Practices
+
+<Note>
+When using base images:
+1. Always specify version tags in production
+2. Use `latest` only for development
+3. Review security updates regularly
+4. Keep images updated to benefit from security patches
+</Note>
+
+<Accordion title="Security Considerations">
+- **Alpine**: Minimal attack surface due to small size
+- **Regular Updates**: All images track upstream security updates
+- **License Compliance**: Review licenses before production use
+- **Session Security**: Never commit Telegram session strings to version control
+</Accordion>

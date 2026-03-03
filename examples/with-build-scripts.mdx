@@ -1,0 +1,498 @@
+---
+title: Example with Build Scripts
+description: Learn how to use pre.sh and post.sh scripts to add custom build logic before and after Docker builds
+---
+
+Some applications require complex build steps that are difficult to express in a Dockerfile alone. Build scripts (`pre.sh` and `post.sh`) let you run custom logic before and after the Docker build.
+
+## When to Use Build Scripts
+
+Build scripts are useful when you need to:
+
+- Clone and configure source code before building
+- Modify configuration files programmatically
+- Run complex build tools not easily containerized
+- Perform post-build validation or artifact processing
+- Set up build environments with specific tool versions
+
+<Note>
+Build scripts run on the **host machine** (the build server), not inside the Docker container. This gives you full control over the build environment.
+</Note>
+
+## Example: ray.so
+
+We'll use **ray.so** as our example - a Next.js application for creating code snippets. This app requires cloning, configuration changes, and building with Bun before creating the Docker image.
+
+### Project Structure
+
+```
+apps/rayso/
+├── meta.json
+├── pre.sh          # Runs before Docker build
+└── Dockerfile      # Runs after pre.sh
+```
+
+## Configuration Files
+
+<CodeGroup>
+
+```json meta.json
+{
+  "name": "rayso",
+  "type": "app",
+  "title": "ray.so",
+  "description": "Create code snippets, browse AI prompts, create extension icons and more.",
+  "license": "MIT",
+  "variants": {
+    "latest": {
+      "version": "73fac26",
+      "sha": "73fac26b0f184b57ebacd37da95721210a49e1dc",
+      "checkver": {
+        "type": "sha",
+        "repo": "raycast/ray-so"
+      }
+    }
+  }
+}
+```
+
+```bash pre.sh
+#!/bin/bash
+
+set -euxo pipefail
+
+VERSION="73fac26"
+
+# Clone the repository
+mkdir -p app && cd app
+git clone --depth=1 https://github.com/raycast/ray-so . && git checkout $VERSION
+
+# Configure Next.js for standalone output
+if ! grep -q 'output:' next.config.js; then
+  sed -i '/const nextConfig = {/a\  output: "standalone",' next.config.js;
+else
+  sed -i 's/output: .*/output: "standalone",/' next.config.js;
+fi
+
+# Install Bun and Node.js
+mise use bun@latest node@lts -g
+
+# Build the application
+bun install --no-cache && bun run build
+```
+
+```dockerfile Dockerfile
+FROM node:24-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0"
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs && \
+    mkdir -p .next && \
+    chown -R nextjs:nodejs /app
+
+USER nextjs
+
+COPY --chown=nextjs:nodejs ./app/public ./public
+COPY --chown=nextjs:nodejs ./app/.next/standalone/apps/rayso/app ./
+COPY --chown=nextjs:nodejs ./app/.next/static ./.next/static
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
+```
+
+</CodeGroup>
+
+## Understanding the Build Process
+
+The build happens in three stages:
+
+### Stage 1: Pre-Build Script (pre.sh)
+
+Runs on the host machine before Docker build starts.
+
+<Tabs>
+  <Tab title="Setup">
+    ```bash
+    #!/bin/bash
+    set -euxo pipefail
+    
+    VERSION="73fac26"
+    ```
+    
+    - `set -e`: Exit immediately if any command fails
+    - `set -u`: Exit if undefined variables are used
+    - `set -x`: Print each command before execution (useful for debugging)
+    - `set -o pipefail`: Ensure pipeline failures are caught
+    
+    <Tip>
+    The `VERSION` variable should match the value in `meta.json` for consistency.
+    </Tip>
+  </Tab>
+  
+  <Tab title="Clone Source">
+    ```bash
+    # Clone the repository
+    mkdir -p app && cd app
+    git clone --depth=1 https://github.com/raycast/ray-so . && git checkout $VERSION
+    ```
+    
+    - Creates an `app` directory for the source code
+    - Shallow clone (`--depth=1`) to save time and space
+    - Checks out the specific commit SHA for reproducibility
+    
+    <Note>
+    The source code is cloned on the host because we need to modify configuration files before building.
+    </Note>
+  </Tab>
+  
+  <Tab title="Configure Next.js">
+    ```bash
+    # Configure Next.js for standalone output
+    if ! grep -q 'output:' next.config.js; then
+      sed -i '/const nextConfig = {/a\  output: "standalone",' next.config.js;
+    else
+      sed -i 's/output: .*/output: "standalone",/' next.config.js;
+    fi
+    ```
+    
+    - Checks if the config already has an `output` setting
+    - If not, adds `output: "standalone"` to the config
+    - If it exists, replaces it with the standalone setting
+    
+    **Why standalone mode?**
+    - Creates a minimal production bundle
+    - Includes only necessary files in `./next/standalone/`
+    - Results in much smaller Docker images
+  </Tab>
+  
+  <Tab title="Build">
+    ```bash
+    # Install Bun and Node.js
+    mise use bun@latest node@lts -g
+    
+    # Build the application
+    bun install --no-cache && bun run build
+    ```
+    
+    - Uses [mise](https://mise.jdx.dev/) to install Bun and Node.js
+    - Installs dependencies with Bun (faster than npm/yarn)
+    - Builds the Next.js application
+    - `--no-cache` ensures a clean build
+    
+    <Tip>
+    Building on the host allows you to use any build tools, not just what's available in Docker images.
+    </Tip>
+  </Tab>
+</Tabs>
+
+### Stage 2: Docker Build (Dockerfile)
+
+Runs after pre.sh completes successfully.
+
+```dockerfile
+FROM node:24-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0"
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs && \
+    mkdir -p .next && \
+    chown -R nextjs:nodejs /app
+
+USER nextjs
+
+COPY --chown=nextjs:nodejs ./app/public ./public
+COPY --chown=nextjs:nodejs ./app/.next/standalone/apps/rayso/app ./
+COPY --chown=nextjs:nodejs ./app/.next/static ./.next/static
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
+```
+
+**Key points:**
+
+1. **Single stage**: No build stage needed since pre.sh handled building
+2. **Security**: Creates a non-root user (`nextjs`) to run the application
+3. **Minimal copying**: Only copies the built artifacts from `./app/` (created by pre.sh)
+4. **Standalone structure**: Copies from `.next/standalone/apps/rayso/app` (Next.js monorepo structure)
+
+<Note>
+The Dockerfile has access to the `./app/` directory created by `pre.sh`. This is why we can copy built files directly.
+</Note>
+
+## Build Script Best Practices
+
+### Error Handling
+
+Always start your scripts with:
+
+```bash
+#!/bin/bash
+set -euxo pipefail
+```
+
+This ensures:
+- Scripts fail fast on errors
+- Undefined variables are caught
+- Commands are logged for debugging
+- Pipeline failures are detected
+
+### Working Directory
+
+Build scripts run in the application directory (e.g., `apps/rayso/`). Paths are relative to this directory:
+
+```bash
+# Creates apps/rayso/app/
+mkdir -p app
+
+# References files in apps/rayso/
+cp config.template app/config.json
+```
+
+### Environment Variables
+
+Scripts have access to environment variables from the build system:
+
+- `VERSION`: The version from meta.json
+- `SHA`: The git SHA from meta.json
+- `VARIANT`: The variant being built
+
+<Tip>
+You can reference these in your scripts:
+```bash
+git checkout $SHA
+echo "Building version $VERSION"
+```
+</Tip>
+
+### Clean Builds
+
+Remove artifacts from previous builds:
+
+```bash
+# Clean before starting
+rm -rf app/
+mkdir -p app
+```
+
+### Dependency Management
+
+Use version managers for reproducible builds:
+
+```bash
+# Using mise (recommended)
+mise use node@20.11.0 -g
+
+# Using nvm
+nvm install 20.11.0
+nvm use 20.11.0
+
+# Using asdf
+asdf install nodejs 20.11.0
+asdf global nodejs 20.11.0
+```
+
+## Common Build Script Patterns
+
+<Tabs>
+  <Tab title="Clone & Build">
+    ```bash
+    #!/bin/bash
+    set -euxo pipefail
+    
+    # Clone repository
+    git clone https://github.com/user/repo app
+    cd app
+    git checkout $SHA
+    
+    # Install and build
+    npm install
+    npm run build
+    ```
+    
+    Best for: Standard Node.js applications
+  </Tab>
+  
+  <Tab title="Configuration">
+    ```bash
+    #!/bin/bash
+    set -euxo pipefail
+    
+    # Clone
+    git clone https://github.com/user/repo app
+    cd app
+    
+    # Modify config before building
+    sed -i 's/API_URL=.*/API_URL=production/' .env
+    sed -i 's/"version": ".*"/"version": "'$VERSION'"/' package.json
+    
+    # Build
+    npm install && npm run build
+    ```
+    
+    Best for: Apps needing config changes before build
+  </Tab>
+  
+  <Tab title="Multi-step Build">
+    ```bash
+    #!/bin/bash
+    set -euxo pipefail
+    
+    # Download and extract
+    curl -L https://github.com/user/repo/archive/$VERSION.tar.gz -o source.tar.gz
+    tar -xzf source.tar.gz
+    mv repo-$VERSION app
+    cd app
+    
+    # Multiple build steps
+    ./configure --prefix=/usr/local
+    make -j$(nproc)
+    make install DESTDIR=./dist
+    ```
+    
+    Best for: Compiled applications (C, C++, Go, Rust)
+  </Tab>
+  
+  <Tab title="Asset Generation">
+    ```bash
+    #!/bin/bash
+    set -euxo pipefail
+    
+    git clone https://github.com/user/repo app
+    cd app
+    
+    # Generate assets
+    npm install
+    npm run generate-icons
+    npm run optimize-images
+    npm run build
+    
+    # Copy specific artifacts
+    mkdir -p ../artifacts
+    cp -r dist ../artifacts/
+    cp -r public ../artifacts/
+    ```
+    
+    Best for: Apps with complex asset pipelines
+  </Tab>
+</Tabs>
+
+## Post-Build Scripts (post.sh)
+
+While this example doesn't use a `post.sh` script, here are common use cases:
+
+### Validation
+
+```bash
+#!/bin/bash
+set -euxo pipefail
+
+# Test the built image
+docker run --rm my-image:latest node --version
+docker run --rm my-image:latest npm test
+```
+
+### Artifact Publishing
+
+```bash
+#!/bin/bash
+set -euxo pipefail
+
+# Export and publish build artifacts
+docker save my-image:latest | gzip > image.tar.gz
+aws s3 cp image.tar.gz s3://bucket/images/
+```
+
+### Cleanup
+
+```bash
+#!/bin/bash
+set -euxo pipefail
+
+# Clean up large build artifacts
+rm -rf app/node_modules
+rm -rf app/.next/cache
+```
+
+## Debugging Build Scripts
+
+### Enable Verbose Output
+
+The `-x` flag in `set -euxo pipefail` prints each command:
+
+```bash
++ VERSION=73fac26
++ mkdir -p app
++ cd app
++ git clone --depth=1 https://github.com/raycast/ray-so .
+Cloning into '.'...
+```
+
+### Add Debug Statements
+
+```bash
+echo "=== Starting build ==="
+echo "Version: $VERSION"
+echo "Working directory: $(pwd)"
+
+# ... build commands ...
+
+echo "=== Build complete ==="
+ls -la app/dist/
+```
+
+### Test Locally
+
+Run scripts locally before committing:
+
+```bash
+cd apps/rayso
+bash -x pre.sh
+```
+
+## Comparison: Build Scripts vs Dockerfile
+
+| Aspect | Build Scripts (pre.sh) | Dockerfile |
+|--------|------------------------|------------|
+| **Runs on** | Host machine | Docker container |
+| **Build tools** | Any tools on host | Only containerized tools |
+| **Flexibility** | Very high | Moderate |
+| **Reproducibility** | Depends on host | High (isolated) |
+| **Speed** | Can be faster | May need image pulls |
+| **Best for** | Complex builds, config changes | Standard containerized builds |
+
+<Tip>
+Combine both approaches: Use `pre.sh` for tasks that need host tools, and Dockerfile for containerized final assembly.
+</Tip>
+
+## Key Takeaways
+
+- **pre.sh runs first**: Use it to prepare source code and build artifacts
+- **Dockerfile accesses build results**: Can copy from directories created by pre.sh
+- **Error handling is critical**: Always use `set -euxo pipefail`
+- **Keep builds reproducible**: Pin tool versions and use git SHAs
+- **Debug with -x**: The verbose flag helps troubleshoot issues
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Simple App Example" icon="rocket" href="/examples/simple-app">
+    See a basic example without build scripts
+  </Card>
+  <Card title="Multi-Variant Setup" icon="layer-group" href="/examples/multi-variant">
+    Learn about creating multiple variants
+  </Card>
+</CardGroup>

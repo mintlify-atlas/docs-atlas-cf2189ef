@@ -1,0 +1,646 @@
+---
+title: Docker Image Building
+description: Multi-platform Docker image building and publishing workflow
+---
+
+The Build Image workflow handles Docker image creation, multi-platform builds, and publishing to multiple container registries.
+
+## Workflow Overview
+
+The workflow consists of four main jobs:
+
+<Steps>
+  <Step title="Resolve Metadata">
+    Generates build matrix from app configuration
+  </Step>
+  <Step title="Build & Push Images">
+    Builds multi-platform images and pushes to registries
+  </Step>
+  <Step title="Merge Pull Request">
+    Auto-merges PR after successful build (PR context only)
+  </Step>
+  <Step title="Build Apps Data">
+    Generates documentation data and triggers deployment
+  </Step>
+</Steps>
+
+## Workflow Triggers
+
+<CodeGroup>
+
+```yaml Manual Dispatch
+workflow_dispatch:
+  inputs:
+    context:
+      description: 'App Context, e.g. apps/icones'
+      type: choice
+      required: true
+      options:
+        - apps/cobalt
+        - apps/icones
+        - apps/readest
+        # ... all available apps
+    variants:
+      description: 'Build variants, e.g. latest,stable'
+      default: latest
+      type: string
+    debug:
+      description: 'Debug mode'
+      default: false
+      type: boolean
+```
+
+```yaml Pull Request
+pull_request:
+  branches:
+    - master
+```
+
+</CodeGroup>
+
+## Workflow Inputs
+
+<ParamField path="context" type="string" required>
+  App context directory to build (e.g., `apps/icones`, `base/nginx`)
+  
+  Available contexts:
+  - **Apps**: `apps/cobalt`, `apps/icones`, `apps/readest`, etc.
+  - **Base images**: `base/alpine`, `base/nginx`, `base/vscode`
+  - **Test images**: `test/icones`, `test/weektodo`
+</ParamField>
+
+<ParamField path="variants" type="string" default="latest">
+  Comma-separated list of variants to build. Each variant may have different:
+  - Dockerfile (e.g., `Dockerfile.stable`)
+  - Pre-build script (e.g., `pre.stable.sh`)
+  - Image tags and configurations
+  
+  Example: `latest,stable` builds both variants
+</ParamField>
+
+<ParamField path="debug" type="boolean" default={false}>
+  Enable debug mode for verbose logging
+</ParamField>
+
+## Job 1: Resolve Metadata
+
+Generates build matrix from app metadata.
+
+### Steps
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  
+  - name: Resolve metadata
+    id: metadata
+    uses: ./action/resolve-meta
+    env:
+      TZ: Asia/Shanghai
+      DOCKERHUB_USERNAME: aliuq
+      GHCR_USERNAME: aliuq
+      ALI_ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+      ALI_ACR_USERNAME: aliuq
+    with:
+      context: ${{ inputs.context }}
+      variants: ${{ inputs.variants }}
+      debug: ${{ inputs.debug }}
+```
+
+### Resolve Metadata Action
+
+Implemented in `action/src/metadata.ts:11-67`, the action:
+
+<Steps>
+  <Step title="Scan Changed Context">
+    ```typescript
+    const result = await appsManager.scanChangedContext()
+    // Returns: { context: string, variants: string[] }
+    ```
+    Determines which context changed (from input or PR files)
+  </Step>
+  
+  <Step title="Load App Context">
+    ```typescript
+    const app = await appsManager.loadAppContext(result.context)
+    ```
+    Loads `meta.json` and Dockerfile configurations
+  </Step>
+  
+  <Step title="Get Changed Variants">
+    ```typescript
+    const variants = app.getChangedVariants(result.variants)
+    ```
+    Filters variants based on input or changed files
+  </Step>
+  
+  <Step title="Build Matrix Data">
+    ```typescript
+    const matrixArray = await app.buildMatrixData(variants)
+    core.setOutput('matrix', { include: matrixArray })
+    ```
+    Generates GitHub Actions matrix for parallel builds
+  </Step>
+</Steps>
+
+### Matrix Output Structure
+
+The metadata action outputs a matrix with entries like:
+
+```json
+{
+  "include": [
+    {
+      "name": "icones",
+      "variant": "latest",
+      "build": {
+        "context": "apps/icones",
+        "file": "apps/icones/Dockerfile",
+        "platformLines": "linux/amd64,linux/arm64",
+        "push": true
+      },
+      "metadata": {
+        "imageLines": "aliuq/icones\nghcr.io/aliuq/icones",
+        "tagLines": "type=raw,value=latest\ntype=semver,pattern={{version}}",
+        "labelLines": "org.opencontainers.image.title=icones\norg.opencontainers.image.description=..."
+      },
+      "pushDocker": true,
+      "pushGhcr": true,
+      "pushAli": false,
+      "hasPreScript": true,
+      "hasPostScript": false,
+      "readme": {
+        "push": true,
+        "repo": "aliuq/icones",
+        "path": "apps/icones/README.md"
+      }
+    }
+  ]
+}
+```
+
+## Job 2: Docker Build
+
+Builds and pushes images based on metadata matrix.
+
+### Build Strategy
+
+```yaml
+strategy:
+  matrix: ${{ fromJson(needs.metadata.outputs.matrix) }}
+```
+
+Creates parallel jobs for each variant in the matrix.
+
+### Registry Authentication
+
+<CodeGroup>
+
+```yaml Docker Hub
+- name: Login to Docker Hub
+  uses: docker/login-action@v3
+  if: ${{ matrix.pushDocker }}
+  with:
+    username: ${{ secrets.DOCKERHUB_USERNAME }}
+    password: ${{ secrets.DOCKERHUB_TOKEN }}
+```
+
+```yaml GitHub Container Registry
+- name: Login to GHCR
+  uses: docker/login-action@v3
+  if: ${{ matrix.pushGhcr }}
+  with:
+    registry: ghcr.io
+    username: ${{ github.repository_owner }}
+    password: ${{ secrets.GITHUB_TOKEN }}
+```
+
+```yaml Aliyun ACR
+- name: Login to Aliyun ACR
+  uses: docker/login-action@v3
+  if: ${{ matrix.pushAli && env.ACR_REGISTRY }}
+  env:
+    ACR_REGISTRY: ${{ secrets.ALI_ACR_REGISTRY }}
+    ACR_USERNAME: ${{ secrets.ALI_ACR_USERNAME }}
+    ACR_PASSWORD: ${{ secrets.ALI_ACR_PASSWORD }}
+  with:
+    registry: ${{ secrets.ALI_ACR_REGISTRY }}
+    username: ${{ secrets.ALI_ACR_USERNAME }}
+    password: ${{ secrets.ALI_ACR_PASSWORD }}
+```
+
+</CodeGroup>
+
+### Build Process
+
+<Steps>
+  <Step title="Generate Docker Metadata">
+    ```yaml
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ matrix.metadata.imageLines }}
+        tags: ${{ matrix.metadata.tagLines }}
+        labels: ${{ matrix.metadata.labelLines }}
+        annotations: ${{ matrix.metadata.labelLines }}
+    ```
+    Generates tags, labels, and annotations from matrix metadata
+  </Step>
+  
+  <Step title="Setup Build Environment">
+    ```yaml
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    ```
+    Enables multi-platform builds
+  </Step>
+  
+  <Step title="Setup Mise Tools">
+    ```yaml
+    - uses: jdx/mise-action@v3
+      with:
+        working_directory: ${{ matrix.build.context }}
+    ```
+    Installs tools specified in `.mise.toml`
+  </Step>
+  
+  <Step title="Execute Pre-Build Script">
+    ```yaml
+    - name: Execute Pre-Build Commands
+      if: matrix.hasPreScript
+      working-directory: ${{ matrix.build.context }}
+      run: bash ${{ matrix.variant != 'latest' && 
+                     format('pre.{0}.sh', matrix.variant) || 
+                     'pre.sh' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    ```
+    Runs variant-specific preparation scripts
+  </Step>
+  
+  <Step title="Build and Push Image">
+    ```yaml
+    - name: Build & Push
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ matrix.build.context }}
+        file: ${{ matrix.build.file }}
+        platforms: ${{ matrix.build.platformLines }}
+        push: ${{ matrix.build.push }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    ```
+    Builds multi-platform image with GitHub Actions cache
+  </Step>
+  
+  <Step title="Execute Post-Build Script">
+    ```yaml
+    - name: Execute Post-Build Commands
+      if: matrix.hasPostScript
+      working-directory: ${{ matrix.build.context }}
+      run: bash ${{ matrix.variant != 'latest' && 
+                     format('post.{0}.sh', matrix.variant) || 
+                     'post.sh' }}
+    ```
+    Runs cleanup or additional steps after build
+  </Step>
+  
+  <Step title="Push README to Docker Hub">
+    ```yaml
+    - name: Push README
+      if: ${{ matrix.readme.push }}
+      uses: peter-evans/dockerhub-description@v4
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        repository: ${{ matrix.readme.repo }}
+        readme-filepath: ${{ matrix.readme.path }}
+    ```
+    Syncs README to Docker Hub repository page
+  </Step>
+</Steps>
+
+### Build Caching
+
+The workflow uses GitHub Actions cache for Docker layers:
+
+```yaml
+cache-from: type=gha
+cache-to: type=gha,mode=max
+```
+
+**Benefits:**
+- Faster subsequent builds
+- Reduced bandwidth usage
+- Automatic cache management
+
+## Multi-Platform Builds
+
+Supported platforms are defined in `meta.json`:
+
+```json
+{
+  "variants": {
+    "latest": {
+      "docker": {
+        "platforms": ["linux/amd64", "linux/arm64"]
+      }
+    }
+  }
+}
+```
+
+QEMU enables cross-platform builds on AMD64 runners:
+
+```yaml
+- name: Set up QEMU
+  uses: docker/setup-qemu-action@v3
+```
+
+## Pre and Post Build Scripts
+
+Apps can define custom build scripts:
+
+### Pre-Build Scripts
+
+Location: `{context}/pre.sh` or `{context}/pre.{variant}.sh`
+
+**Common uses:**
+- Download source code
+- Clone repositories
+- Generate files
+- Install dependencies
+
+**Example:**
+```bash
+#!/bin/bash
+set -e
+
+# Clone latest release
+git clone --depth 1 --branch v1.0.0 https://github.com/user/repo.git src
+```
+
+### Post-Build Scripts
+
+Location: `{context}/post.sh` or `{context}/post.{variant}.sh`
+
+**Common uses:**
+- Cleanup temporary files
+- Trigger webhooks
+- Send notifications
+
+## Telegram Notifications
+
+Sends build notifications to Telegram:
+
+```yaml
+- name: Notification
+  uses: aliuq/telegram-action@v1
+  with:
+    bot_token: ${{ secrets.BOT_TOKEN }}
+    chat_id: ${{ secrets.CHAT_ID }}
+    reply_to_message_id: ${{ secrets.REPLY_TO_MESSAGE_ID }}
+    message: |
+      🎉 ${{ steps.pre-notify.outputs.name }} has new image builds
+      
+      ${{ steps.pre-notify.outputs.tags }}
+      
+      #build_image #app_${{ steps.pre-notify.outputs.flag }}
+    buttons: ${{ steps.pre-notify.outputs.buttons }}
+```
+
+Notification includes:
+- App name with repository link
+- List of image tags
+- Buttons for workflow, repository, and registry links
+
+## Job 3: Merge Pull Request
+
+Auto-merges PR after successful build (PR context only):
+
+```yaml
+merge-pull-request:
+  name: Merge Pull Request
+  runs-on: ubuntu-latest
+  needs: [metadata, docker-build]
+  if: github.event_name == 'pull_request'
+  permissions:
+    contents: write
+    pull-requests: write
+  steps:
+    - name: Merge PR
+      uses: pascalgn/automerge-action@v0.16.4
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PULL_REQUEST: ${{ github.event.pull_request.number }}
+        MERGE_DELETE_BRANCH: true
+```
+
+<Note>
+  The PR is only merged if both metadata resolution and Docker build jobs succeed
+</Note>
+
+## Job 4: Build Apps Data
+
+Generates documentation data and triggers deployment:
+
+<Steps>
+  <Step title="Generate Data File">
+    ```bash
+    echo "📝 Generating docs data..."
+    node scripts/generate-data.js
+    ```
+    Creates `docs/data.json` with app metadata
+  </Step>
+  
+  <Step title="Check for Changes">
+    ```bash
+    if git diff --exit-code docs/data.json > /dev/null 2>&1; then
+      echo "✅ No changes detected"
+      exit 0
+    fi
+    ```
+    Detects if data file changed
+  </Step>
+  
+  <Step title="Commit Changes">
+    ```bash
+    git config --global user.name "github-actions[bot]"
+    git config --global user.email "github-actions[bot]@users.noreply.github.com"
+    git add docs/data.json
+    git commit -m "chore: update docs data"
+    ```
+    Commits updated data file
+  </Step>
+  
+  <Step title="Push with Retry">
+    ```bash
+    MAX_RETRIES=3
+    for attempt in $(seq 1 $MAX_RETRIES); do
+      if git push origin HEAD:master; then
+        exit 0
+      fi
+      git fetch origin master
+      git rebase origin/master
+    done
+    ```
+    Pushes with automatic retry and rebase
+  </Step>
+  
+  <Step title="Trigger Deployment">
+    ```bash
+    gh workflow run deploy-pages.yaml \
+      --repo ${{ github.repository }} \
+      --ref master
+    ```
+    Triggers documentation deployment
+  </Step>
+</Steps>
+
+## Permissions Required
+
+```yaml
+permissions:
+  contents: read      # Read repository
+  packages: write     # Push to GHCR
+  pull-requests: write # Auto-merge PRs
+```
+
+### Required Secrets
+
+<ParamField path="DOCKERHUB_USERNAME" type="secret">
+  Docker Hub username for authentication
+</ParamField>
+
+<ParamField path="DOCKERHUB_TOKEN" type="secret">
+  Docker Hub access token (not password)
+</ParamField>
+
+<ParamField path="ALI_ACR_REGISTRY" type="secret">
+  Aliyun ACR registry URL (e.g., `registry.cn-hangzhou.aliyuncs.com`)
+</ParamField>
+
+<ParamField path="ALI_ACR_USERNAME" type="secret">
+  Aliyun ACR username
+</ParamField>
+
+<ParamField path="ALI_ACR_PASSWORD" type="secret">
+  Aliyun ACR password
+</ParamField>
+
+<ParamField path="BOT_TOKEN" type="secret">
+  Telegram bot token for notifications
+</ParamField>
+
+<ParamField path="CHAT_ID" type="secret">
+  Telegram chat ID for notifications
+</ParamField>
+
+<ParamField path="GH_WORKFLOW_PAT" type="secret">
+  Personal access token with workflow trigger permissions
+</ParamField>
+
+## Testing Locally with ACT
+
+The `build-test.yaml` workflow is optimized for local testing with [act](https://github.com/nektos/act):
+
+```yaml
+inputs:
+  build:
+    description: 'Enable build image'
+    default: true
+    type: boolean
+  notify:
+    description: 'Enable notification'
+    default: true
+    type: boolean
+```
+
+**Differences from production:**
+- Uses local cache instead of GitHub Actions cache
+- Disables automatic push (`push: false`)
+- Optional build and notification steps
+
+**Running locally:**
+```bash
+act workflow_dispatch \
+  -W .github/workflows/build-test.yaml \
+  -e <(echo '{"inputs":{"context":"apps/icones","variants":"latest"}}')
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Build fails with platform error">
+    **Cause**: QEMU not properly configured for target platform
+    
+    **Solution**:
+    - Ensure `docker/setup-qemu-action@v3` runs before build
+    - Verify platforms in `meta.json` are valid
+    - Check runner supports multi-platform builds
+  </Accordion>
+  
+  <Accordion title="Registry push fails">
+    **Cause**: Authentication failure or missing credentials
+    
+    **Solution**:
+    - Verify secrets are configured: `DOCKERHUB_TOKEN`, `ALI_ACR_PASSWORD`
+    - Check token hasn't expired
+    - Ensure registry URLs are correct
+    - For GHCR, verify `packages: write` permission
+  </Accordion>
+  
+  <Accordion title="Pre-build script fails">
+    **Cause**: Script error or missing dependencies
+    
+    **Solution**:
+    - Check script has execute permissions
+    - Verify script path matches variant naming
+    - Review script logs for specific errors
+    - Ensure required tools are in `.mise.toml`
+  </Accordion>
+  
+  <Accordion title="Cache not working">
+    **Cause**: Cache scope or permissions issue
+    
+    **Solution**:
+    - Verify workflow has cache access
+    - Check if cache size exceeds limits (10GB)
+    - Review cache key format
+    - Try clearing cache from Actions settings
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Build Cache" icon="bolt">
+    Always enable `cache-from` and `cache-to` for faster builds
+  </Card>
+  <Card title="Multi-Platform Support" icon="server">
+    Support both AMD64 and ARM64 for wider compatibility
+  </Card>
+  <Card title="Test Locally" icon="flask">
+    Use `build-test.yaml` with ACT before pushing
+  </Card>
+  <Card title="Variant Scripts" icon="file-code">
+    Name scripts with variant suffix: `pre.stable.sh`
+  </Card>
+</CardGroup>
+
+## Related Workflows
+
+<CardGroup cols={2}>
+  <Card title="Version Checks" icon="magnifying-glass" href="/automation/version-checks">
+    Automated version checking workflow
+  </Card>
+  <Card title="All Workflows" icon="list" href="/automation/workflows">
+    Complete workflow overview
+  </Card>
+</CardGroup>

@@ -1,0 +1,737 @@
+---
+title: Multi-Variant Image Support
+description: Build and maintain multiple image variants from a single application source
+---
+
+Apps Image supports building multiple Docker image variants from a single application. Each variant can track different versions, configurations, or build targets independently.
+
+## What are Variants?
+
+Variants are different versions or configurations of the same application packaged as separate Docker images. Common use cases:
+
+- **Stability levels**: `latest` (stable) and `dev` (development)
+- **Platform differences**: `latest` (Debian) and `alpine` (Alpine Linux)
+- **Feature sets**: `latest` (standard) and `tls` (with TLS support)
+- **Framework flavors**: `latest`, `vue`, `svelte` (for base images)
+
+## Variant Configuration
+
+Variants are defined in the `variants` object of `meta.json`:
+
+```json
+{
+  "name": "myapp",
+  "type": "app",
+  "variants": {
+    "latest": { /* variant config */ },
+    "dev": { /* variant config */ },
+    "alpine": { /* variant config */ }
+  }
+}
+```
+
+Each variant is a complete `ImageVariant` object with its own version tracking and Docker configuration.
+
+## Real-World Examples
+
+### Example 1: Stable vs Development
+
+Track stable releases separately from development commits.
+
+```json
+// apps/lsky/meta.json
+{
+  "name": "lsky",
+  "type": "app",
+  "title": "兰空图床",
+  "slogan": "兰空图床，轻量级图片云存储系统",
+  "description": "兰空图床(Lsky Pro) - Your photo album on the cloud.",
+  "license": "GPL-3.0",
+  "variants": {
+    "latest": {
+      "version": "2.1",
+      "sha": "923f567e0a93c7291c4c9fc5279da9847ed39f7e",
+      "checkver": {
+        "type": "tag",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "38d52c4",
+      "sha": "38d52c4609eb85236b45ac75acac2ced55174953",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/lsky-org/lsky-pro"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Result**:
+- `aliuq/lsky:latest`, `aliuq/lsky:2.1` - Stable release
+- `aliuq/lsky:dev`, `aliuq/lsky:dev-38d52c4` - Development build
+
+**Files**:
+```
+apps/lsky/
+├── meta.json
+├── Dockerfile        # For 'latest' variant
+└── Dockerfile.dev    # For 'dev' variant
+```
+
+<Info>
+The `latest` variant uses `Dockerfile`, while other variants use `Dockerfile.{variantName}`.
+</Info>
+
+### Example 2: Platform Variants
+
+Build different base images for different platforms.
+
+```json
+// apps/weserv/meta.json
+{
+  "name": "weserv",
+  "type": "app",
+  "slogan": "wsrv.nl",
+  "description": "weserv 是一个用于快速生成图像的 API",
+  "variants": {
+    "latest": {
+      "version": "0f029b4",
+      "sha": "0f029b475c0ace517205ff88a967449aea0b2c41",
+      "checkver": {
+        "type": "sha",
+        "repo": "weserv/images",
+        "branch": "5.x"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value=5.x",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "alpine": {
+      "version": "0f029b4",
+      "sha": "0f029b475c0ace517205ff88a967449aea0b2c41",
+      "checkver": {
+        "type": "sha",
+        "repo": "weserv/images",
+        "branch": "5.x"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=alpine",
+          "type=raw,value=5.x-alpine",
+          "type=raw,value={{version}}-alpine"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Result**:
+- `aliuq/weserv:latest`, `aliuq/weserv:5.x`, `aliuq/weserv:0f029b4` - Standard build
+- `aliuq/weserv:alpine`, `aliuq/weserv:5.x-alpine`, `aliuq/weserv:0f029b4-alpine` - Alpine build
+
+<Note>
+Both variants track the same upstream version but build different Docker images with different tags.
+</Note>
+
+### Example 3: Feature Variants
+
+Build variants with different feature sets.
+
+```json
+// apps/srcbook/meta.json
+{
+  "name": "srcbook",
+  "type": "app",
+  "title": "SrcBook",
+  "slogan": "TypeScript 笔记本，浏览器中运行 TS",
+  "description": "TypeScript-centric app development platform: notebook and AI app builder",
+  "license": "Apache-2.0",
+  "variants": {
+    "latest": {
+      "version": "0.0.19",
+      "sha": "0ba24b1ea83b0dd20137236ce9aebc3ff86bff37",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/srcbookdev/srcbook",
+        "file": "srcbook/package.json"
+      }
+    },
+    "tls": {
+      "version": "0.0.19",
+      "sha": "0ba24b1ea83b0dd20137236ce9aebc3ff86bff37",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/srcbookdev/srcbook",
+        "file": "srcbook/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=tls",
+          "type=raw,value={{version}}-tls"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Result**:
+- `aliuq/srcbook:latest`, `aliuq/srcbook:0.0.19` - Standard version
+- `aliuq/srcbook:tls`, `aliuq/srcbook:0.0.19-tls` - TLS-enabled version
+
+### Example 4: Base Image Variants
+
+Provide framework-specific base images.
+
+```json
+// base/nginx/meta.json
+{
+  "name": "nginx",
+  "type": "base",
+  "description": "Nginx with custom configuration, based on alpine. The root path is /app.",
+  "variants": {
+    "latest": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "vue": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=vue",
+          "type=raw,value={{version}}-vue"
+        ]
+      }
+    },
+    "svelte": {
+      "version": "0.1.0",
+      "sha": "363f047cd6f9f160cb6bb142afb8d14191aac07e",
+      "checkver": {
+        "type": "manual"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=svelte",
+          "type=raw,value={{version}}-svelte"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Result**:
+- `aliuq/nginx:latest` - Standard nginx
+- `aliuq/nginx:vue` - Optimized for Vue apps
+- `aliuq/nginx:svelte` - Optimized for Svelte apps
+
+**Usage in other images**:
+
+```dockerfile
+# apps/icones/Dockerfile
+FROM aliuq/nginx:vue
+COPY --from=build /app/dist /app
+```
+
+```dockerfile
+# apps/cobalt/Dockerfile.dev
+FROM aliuq/nginx:svelte
+COPY ./app/web/build /app
+```
+
+## Variant Properties
+
+### version
+
+**Type**: `string` | **Optional**
+
+Current version of the variant. Updated automatically by version checks (except for `type: manual`).
+
+```json
+{
+  "version": "2.1"
+}
+```
+
+### sha
+
+**Type**: `string` | **Optional**
+
+Git commit SHA (7-40 characters). Updated automatically with version.
+
+```json
+{
+  "sha": "923f567e0a93c7291c4c9fc5279da9847ed39f7e"
+}
+```
+
+<Warning>
+Both `version` and `sha` are required for builds. They're automatically populated by version checks.
+</Warning>
+
+### enabled
+
+**Type**: `boolean` | **Default**: `true`
+
+Disable a variant without removing its configuration.
+
+```json
+{
+  "variants": {
+    "latest": { "enabled": true, /* ... */ },
+    "beta": { "enabled": false, /* ... */ }
+  }
+}
+```
+
+### checkver
+
+**Type**: `VersionCheck` | **Required**
+
+Version checking configuration. See [Version Checking](/concepts/version-checking) for details.
+
+### docker
+
+**Type**: `DockerConfig` | **Optional**
+
+Docker build configuration. See [meta.json reference](/concepts/meta-json#docker-configuration).
+
+## Dockerfile Naming Convention
+
+Each variant requires its own Dockerfile following this naming pattern:
+
+| Variant Name | Dockerfile Name |
+|--------------|----------------|
+| `latest` | `Dockerfile` |
+| `dev` | `Dockerfile.dev` |
+| `alpine` | `Dockerfile.alpine` |
+| `tls` | `Dockerfile.tls` |
+| `{custom}` | `Dockerfile.{custom}` |
+
+**Override with docker.file**:
+
+```json
+{
+  "variants": {
+    "custom": {
+      "docker": {
+        "file": "docker/custom.dockerfile"
+      }
+    }
+  }
+}
+```
+
+## Version Checking Per Variant
+
+Each variant can use different version check strategies:
+
+```json
+{
+  "variants": {
+    "latest": {
+      "checkver": {
+        "type": "tag",
+        "repo": "owner/repo"
+      }
+    },
+    "dev": {
+      "checkver": {
+        "type": "sha",
+        "repo": "owner/repo"
+      }
+    },
+    "stable": {
+      "checkver": {
+        "type": "tag",
+        "repo": "owner/repo",
+        "tagPattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+      }
+    }
+  }
+}
+```
+
+This allows:
+- `latest` - Track any valid semver tag
+- `dev` - Track every commit
+- `stable` - Only track full semver releases (not `-rc` or `-beta`)
+
+## Independent Tag Strategies
+
+Variants can have completely different tagging strategies:
+
+```json
+{
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "8d9bccc",
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Results**:
+- Latest: `latest`, `11.3`, `11`
+- Dev: `dev`, `dev-8d9bccc`
+
+## Build Process
+
+### Variant Selection
+
+When building, you can specify which variants to build:
+
+**Manual Trigger**:
+```yaml
+workflow_dispatch:
+  inputs:
+    context: apps/lsky
+    variants: latest,dev
+```
+
+**All Variants**:
+```yaml
+workflow_dispatch:
+  inputs:
+    context: apps/lsky
+    variants: all  # Builds all variants
+```
+
+**Automatic (PR)**:
+On pull request merge, only changed variants are built (determined by comparing meta.json).
+
+### Build Matrix
+
+The system generates a build matrix for parallel builds (action/src/context/metaAppContext.ts:85-180):
+
+```json
+{
+  "matrix": {
+    "include": [
+      {
+        "variant": "latest",
+        "version": "2.1",
+        "sha": "923f567",
+        "dockerfile": "apps/lsky/Dockerfile",
+        "tags": ["latest", "2.1"],
+        "platforms": ["linux/amd64", "linux/arm64"]
+      },
+      {
+        "variant": "dev",
+        "version": "38d52c4",
+        "sha": "38d52c4",
+        "dockerfile": "apps/lsky/Dockerfile.dev",
+        "tags": ["dev", "dev-38d52c4"],
+        "platforms": ["linux/amd64", "linux/arm64"]
+      }
+    ]
+  }
+}
+```
+
+### Build Scripts Per Variant
+
+Pre-build scripts can be variant-specific:
+
+**Naming Convention**:
+- `pre.sh` - Runs for `latest` variant
+- `pre.dev.sh` - Runs for `dev` variant
+- `pre.{variant}.sh` - Runs for `{variant}`
+
+Example structure:
+```
+apps/myapp/
+├── meta.json
+├── Dockerfile
+├── Dockerfile.dev
+├── pre.sh          # For latest variant
+└── pre.dev.sh      # For dev variant
+```
+
+## Variant Update Workflow
+
+When version checks run:
+
+1. **Each variant is checked independently** (action/src/context/checkAppContext.ts:47-71)
+2. **Updates are detected per variant**
+3. **PR is created with all outdated variants**
+4. **On PR merge, only changed variants rebuild**
+
+**Example PR**:
+
+```markdown
+title: update(apps/lsky): update latest version to 2.1, update dev version to 38d52c4
+
+Variants updated:
+- latest: 2.0 → 2.1
+- dev: 35a1b2c → 38d52c4
+
+Files changed:
+- apps/lsky/meta.json
+```
+
+## Common Patterns
+
+### Pattern 1: Stable + Development
+
+```json
+{
+  "variants": {
+    "latest": {
+      "checkver": { "type": "tag" },
+      "docker": {
+        "tags": ["type=raw,value=latest", "type=raw,value={{version}}"]
+      }
+    },
+    "dev": {
+      "checkver": { "type": "sha" },
+      "docker": {
+        "tags": ["type=raw,value=dev", "type=raw,value=dev-{{sha}}"]
+      }
+    }
+  }
+}
+```
+
+**Use case**: Users can choose stable releases or bleeding-edge development.
+
+### Pattern 2: Monorepo Tracking
+
+```json
+{
+  "variants": {
+    "api": {
+      "checkver": {
+        "type": "sha",
+        "repo": "owner/monorepo",
+        "path": "packages/api"
+      }
+    },
+    "web": {
+      "checkver": {
+        "type": "sha",
+        "repo": "owner/monorepo",
+        "path": "packages/web"
+      }
+    }
+  }
+}
+```
+
+**Use case**: Build separate images for different packages in a monorepo.
+
+### Pattern 3: Branch Tracking
+
+```json
+{
+  "variants": {
+    "latest": {
+      "checkver": {
+        "type": "sha",
+        "repo": "owner/repo",
+        "branch": "main"
+      }
+    },
+    "v5": {
+      "checkver": {
+        "type": "sha",
+        "repo": "owner/repo",
+        "branch": "5.x"
+      },
+      "docker": {
+        "tags": ["type=raw,value=5.x", "type=raw,value={{version}}"]
+      }
+    }
+  }
+}
+```
+
+**Use case**: Support multiple major versions simultaneously.
+
+### Pattern 4: Same Version, Different Builds
+
+```json
+{
+  "variants": {
+    "latest": {
+      "checkver": { "type": "tag", "repo": "owner/repo" }
+    },
+    "alpine": {
+      "checkver": { "type": "tag", "repo": "owner/repo" },
+      "docker": {
+        "tags": ["type=raw,value=alpine", "type=raw,value={{version}}-alpine"]
+      }
+    }
+  }
+}
+```
+
+**Use case**: Same application version, different base images or configurations.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Descriptive Variant Names">
+    Choose names that clearly indicate the variant purpose:
+    
+    ✅ Good: `latest`, `dev`, `alpine`, `tls`, `v5`
+    
+    ❌ Bad: `var1`, `test`, `new`, `old`
+  </Accordion>
+
+  <Accordion title="Keep Variants Minimal">
+    Only create variants that serve different user needs:
+    
+    ```json
+    // Good: Clear purpose for each variant
+    {
+      "variants": {
+        "latest": {},  // Stable
+        "dev": {}      // Development
+      }
+    }
+    
+    // Avoid: Too many similar variants
+    {
+      "variants": {
+        "latest": {},
+        "v1": {},
+        "v2": {},
+        "v3": {},
+        "dev": {},
+        "beta": {},
+        "rc": {}
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Share Configuration When Possible">
+    Use the same checkver for variants tracking the same source:
+    
+    ```json
+    {
+      "variants": {
+        "latest": {
+          "checkver": { "type": "tag", "repo": "owner/repo" }
+        },
+        "alpine": {
+          "checkver": { "type": "tag", "repo": "owner/repo" },
+          "docker": { "tags": ["type=raw,value={{version}}-alpine"] }
+        }
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Document Variant Differences">
+    Add comments or README sections explaining when to use each variant:
+    
+    ```markdown
+    ## Available Variants
+    
+    - `latest`: Stable release, Debian-based
+    - `alpine`: Stable release, Alpine-based (smaller image)
+    - `dev`: Development build from main branch
+    - `tls`: Stable release with TLS/SSL support
+    ```
+  </Accordion>
+
+  <Accordion title="Use Consistent Tagging Across Variants">
+    Maintain predictable tag patterns:
+    
+    ```json
+    {
+      "variants": {
+        "latest": {
+          "docker": { "tags": ["latest", "{{version}}"] }
+        },
+        "alpine": {
+          "docker": { "tags": ["alpine", "{{version}}-alpine"] }
+        },
+        "dev": {
+          "docker": { "tags": ["dev", "dev-{{sha}}"] }
+        }
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Disabling Variants
+
+Temporarily disable a variant without removing it:
+
+```json
+{
+  "variants": {
+    "latest": {
+      "enabled": true,
+      "checkver": { "type": "tag" }
+    },
+    "beta": {
+      "enabled": false,
+      "checkver": { "type": "sha", "branch": "beta" }
+    }
+  }
+}
+```
+
+Disabled variants:
+- Are skipped in version checks
+- Are not built
+- Preserve their configuration for future re-enabling
+
+## Related
+
+- [meta.json Reference](/concepts/meta-json) - Complete meta.json documentation
+- [Version Checking](/concepts/version-checking) - How versions are tracked
+- [Architecture](/concepts/architecture) - System overview

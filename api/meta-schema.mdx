@@ -1,0 +1,373 @@
+---
+title: Meta.json Schema
+description: Complete meta.json schema reference for Apps Image configuration
+---
+
+The `meta.json` file is the core configuration file for each app in Apps Image. It defines the app metadata, version checking behavior, and Docker build configuration.
+
+## Schema Overview
+
+Every app requires a `meta.json` file in its directory with the following structure:
+
+```json
+{
+  "name": "string",
+  "type": "app" | "base" | "sync",
+  "title": "string (optional)",
+  "slogan": "string (optional)",
+  "description": "string (optional)",
+  "license": "string (optional)",
+  "context": "string (optional)",
+  "readme": "string | boolean (optional)",
+  "variants": {
+    "variant-name": {
+      "version": "string (optional)",
+      "sha": "string (optional)",
+      "enabled": "boolean (optional)",
+      "checkver": { ... },
+      "docker": { ... }
+    }
+  },
+  "skip": "boolean (optional)"
+}
+```
+
+## Root Fields
+
+<ParamField path="name" type="string" required>
+  App name used as the default image name. Must be unique within the repository.
+
+  ```json
+  "name": "icones"
+  ```
+</ParamField>
+
+<ParamField path="type" type="'app' | 'base' | 'sync'" required>
+  Image type classification:
+  - `app`: Application image
+  - `base`: Base image for other apps
+  - `sync`: Sync/mirror image
+
+  ```json
+  "type": "app"
+  ```
+</ParamField>
+
+<ParamField path="title" type="string">
+  Human-readable display name for the application.
+
+  ```json
+  "title": "Icones"
+  ```
+</ParamField>
+
+<ParamField path="slogan" type="string">
+  Short tagline or slogan describing the app.
+
+  ```json
+  "slogan": "开源图标浏览器,搜索浏览 150,000+ 图标"
+  ```
+</ParamField>
+
+<ParamField path="description" type="string">
+  Detailed description of the application.
+
+  ```json
+  "description": "Icon Explorer with Instant searching, powered by Iconify"
+  ```
+</ParamField>
+
+<ParamField path="license" type="string">
+  Software license identifier (SPDX format recommended).
+
+  ```json
+  "license": "MIT"
+  ```
+</ParamField>
+
+<ParamField path="context" type="string">
+  Build context path relative to repository root. Defaults to the app directory.
+
+  ```json
+  "context": "apps/icones"
+  ```
+</ParamField>
+
+<ParamField path="readme" type="string | boolean">
+  README file configuration:
+  - `true`: Use default `README.md` in app directory
+  - `false`: No README
+  - `string`: Custom path to README file
+
+  ```json
+  "readme": true
+  ```
+</ParamField>
+
+<ParamField path="variants" type="object" required>
+  Image variants configuration. Each variant represents a different version or build configuration.
+  See [Image Variants](#image-variants) section below.
+
+  ```json
+  "variants": {
+    "latest": { ... },
+    "dev": { ... }
+  }
+  ```
+</ParamField>
+
+<ParamField path="skip" type="boolean" default="false">
+  Skip this app during automated processing.
+
+  ```json
+  "skip": false
+  ```
+</ParamField>
+
+## Image Variants
+
+Variants allow you to maintain multiple versions of the same app (e.g., `latest`, `dev`, `stable`).
+
+### Variant Fields
+
+<ParamField path="variants.{name}.version" type="string">
+  Current version of this variant. Required for most checkver types.
+
+  ```json
+  "version": "11.3"
+  ```
+</ParamField>
+
+<ParamField path="variants.{name}.sha" type="string">
+  Current commit SHA (7-40 hex characters). Required for most checkver types.
+
+  ```json
+  "sha": "e4b53880af4026b8be6a870ae7d8133f744a6181"
+  ```
+</ParamField>
+
+<ParamField path="variants.{name}.enabled" type="boolean" default="true">
+  Enable or disable this variant.
+
+  ```json
+  "enabled": true
+  ```
+</ParamField>
+
+<ParamField path="variants.{name}.checkver" type="object" required>
+  Version checking configuration. See [Checkver Types](/api/checkver-types) for details.
+
+  ```json
+  "checkver": {
+    "type": "version",
+    "repo": "https://github.com/imputnet/cobalt",
+    "file": "web/package.json"
+  }
+  ```
+</ParamField>
+
+<ParamField path="variants.{name}.docker" type="object">
+  Docker build configuration. See [Docker Configuration](/api/docker-config) for details.
+
+  ```json
+  "docker": {
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}"
+    ],
+    "platforms": ["linux/amd64", "linux/arm64"]
+  }
+  ```
+</ParamField>
+
+## Complete Examples
+
+### Simple App with Version Checking
+
+```json apps/cobalt/meta.json
+{
+  "name": "cobalt",
+  "type": "app",
+  "title": "Cobalt",
+  "slogan": "媒体下载器,支持多平台视频/音频下载",
+  "description": "best way to save what you love",
+  "license": "AGPL-3.0",
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "sha": "e4b53880af4026b8be6a870ae7d8133f744a6181",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/imputnet/cobalt",
+        "file": "web/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Multi-Variant App
+
+```json apps/cobalt/meta.json
+{
+  "name": "cobalt",
+  "type": "app",
+  "title": "Cobalt",
+  "description": "best way to save what you love",
+  "license": "AGPL-3.0",
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "sha": "e4b53880af4026b8be6a870ae7d8133f744a6181",
+      "checkver": {
+        "type": "version",
+        "repo": "https://github.com/imputnet/cobalt",
+        "file": "web/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}"
+        ]
+      }
+    },
+    "dev": {
+      "version": "8d9bccc",
+      "sha": "8d9bccc4fedabb6842fab71bd14e805f1ea21336",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/imputnet/cobalt",
+        "path": "web"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+### SHA-based Tracking
+
+```json apps/icones/meta.json
+{
+  "name": "icones",
+  "type": "app",
+  "title": "Icones",
+  "slogan": "开源图标浏览器,搜索浏览 150,000+ 图标",
+  "description": "Icon Explorer with Instant searching, powered by Iconify",
+  "license": "MIT",
+  "variants": {
+    "latest": {
+      "version": "0bc5918",
+      "sha": "0bc59182623617a9238023c183a72863c0ebdfca",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/antfu-collective/icones"
+      }
+    }
+  }
+}
+```
+
+### Tag-based Release Tracking
+
+```json apps/memogram/meta.json
+{
+  "name": "memogram",
+  "type": "app",
+  "title": "Memogram",
+  "slogan": "Memos 的 Telegram 机器人集成",
+  "description": "Memogram is an easy to use integration service for syncing messages and images from a Telegram bot into your Memos.",
+  "license": "Custom properties",
+  "variants": {
+    "latest": {
+      "version": "0.4.2",
+      "sha": "ae833095b8006e7bf9636e7ed4517df9943812e9",
+      "checkver": {
+        "type": "tag",
+        "repo": "https://github.com/usememos/telegram-integration"
+      }
+    }
+  }
+}
+```
+
+### Manual Version Management
+
+```json base/alpine/meta.json
+{
+  "name": "alpine",
+  "type": "base",
+  "description": "Alpine Linux 3.20",
+  "variants": {
+    "latest": {
+      "version": "3.22.1",
+      "sha": "a274bcf3c7710d34df2b38ae6ac4ab5684d8f72d",
+      "checkver": {
+        "type": "manual"
+      }
+    }
+  }
+}
+```
+
+## Type Definitions
+
+TypeScript type definitions from the source code:
+
+```typescript
+export interface Meta {
+  /** App name, used as default image name */
+  name: string
+  /** Image type */
+  type: ImageType
+  /** App display name */
+  title?: string
+  /** App slogan */
+  slogan?: string
+  /** App description */
+  description?: string
+  /** License */
+  license?: string
+  /** Build context path, relative to repository root */
+  context?: string
+  /** README file path or boolean */
+  readme?: string | boolean
+  /** Image variant configurations */
+  variants: Record<string, ImageVariant>
+  /** Skip this app during processing */
+  skip?: boolean
+}
+
+export interface ImageVariant {
+  /** Current version */
+  version?: string
+  /** Current commit SHA, 7-40 hex characters */
+  sha?: string
+  /** Enable this variant */
+  enabled?: boolean
+  /** Version check configuration */
+  checkver: VersionCheck
+  /** Docker configuration */
+  docker?: DockerConfig
+}
+
+export type ImageType = 'app' | 'base' | 'sync'
+```
+
+## Related
+
+- [Checkver Types](/api/checkver-types) - Version checking strategies
+- [Docker Configuration](/api/docker-config) - Docker build options
+- [Placeholders](/api/placeholders) - Template variable system

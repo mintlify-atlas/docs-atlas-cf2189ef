@@ -1,0 +1,527 @@
+---
+title: Resolve Meta Action
+description: GitHub Action for resolving Docker metadata and build matrix
+---
+
+The `resolve-meta` action resolves Docker build metadata and generates a build matrix for multi-variant image builds.
+
+## Overview
+
+This action:
+1. Detects which apps and variants changed
+2. Resolves Docker metadata (images, tags, labels, platforms)
+3. Generates a build matrix for parallel builds
+4. Outputs configuration for docker/build-push-action
+
+## Usage
+
+### Basic Setup
+
+```yaml .github/workflows/build-image.yaml
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      context:
+        description: 'App context (e.g., apps/icones)'
+        required: true
+      variants:
+        description: 'Variants to build (e.g., latest,dev)'
+        default: latest
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.metadata.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve metadata
+        id: metadata
+        uses: ./action/resolve-meta
+        with:
+          context: ${{ inputs.context }}
+          variants: ${{ inputs.variants }}
+
+  build:
+    needs: metadata
+    runs-on: ubuntu-latest
+    if: needs.metadata.outputs.matrix
+    strategy:
+      matrix: ${{ fromJson(needs.metadata.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.build.context }}
+          file: ${{ matrix.build.file }}
+          platforms: ${{ matrix.build.platformLines }}
+          tags: ${{ matrix.metadata.tagLines }}
+          labels: ${{ matrix.metadata.labelLines }}
+```
+
+## Inputs
+
+<ParamField path="context" type="string" required>
+  App context to build (e.g., `apps/icones`).
+
+  ```yaml
+  with:
+    context: apps/icones
+  ```
+</ParamField>
+
+<ParamField path="variants" type="string" default="latest">
+  Comma-separated list of variants to build.
+
+  **Examples**:
+  - `latest` - Build only latest variant
+  - `latest,dev` - Build latest and dev variants
+  - `stable,nightly` - Build custom variants
+
+  ```yaml
+  with:
+    variants: latest,dev
+  ```
+</ParamField>
+
+<ParamField path="debug" type="boolean" default="false">
+  Enable debug logging.
+
+  ```yaml
+  with:
+    debug: true
+  ```
+</ParamField>
+
+## Outputs
+
+<ResponseField name="matrix" type="object">
+  Build matrix for GitHub Actions strategy.
+
+  ```json
+  {
+    "include": [
+      {
+        "name": "icones",
+        "variant": "latest",
+        "metadata": {
+          "images": ["user/icones"],
+          "imageLines": "user/icones",
+          "tags": ["latest", "0bc5918"],
+          "tagLines": "type=raw,value=latest\ntype=raw,value=0bc5918",
+          "labels": [...],
+          "labelLines": "..."
+        },
+        "build": {
+          "platforms": ["linux/amd64", "linux/arm64"],
+          "platformLines": "linux/amd64\nlinux/arm64",
+          "file": "apps/icones/Dockerfile",
+          "context": "apps/icones",
+          "push": true
+        },
+        "readme": {
+          "push": true,
+          "path": "apps/icones/README.md",
+          "repo": "user/icones"
+        },
+        "pushDocker": true,
+        "pushGhcr": true,
+        "pushAli": false,
+        "hasPreScript": false,
+        "hasPostScript": false
+      }
+    ]
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="latest" type="object">
+  Latest variant configuration (for convenience).
+
+  ```json
+  {
+    "name": "icones",
+    "variant": "latest",
+    "metadata": { ... },
+    "build": { ... }
+  }
+  ```
+</ResponseField>
+
+## Complete Example
+
+```yaml .github/workflows/build-image.yaml
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      context:
+        description: 'App Context (e.g., apps/icones)'
+        type: choice
+        required: true
+        options:
+          - apps/cobalt
+          - apps/icones
+          - apps/haitang
+      variants:
+        description: 'Build variants (e.g., latest,stable)'
+        default: latest
+        type: string
+      debug:
+        description: 'Debug mode'
+        default: false
+        type: boolean
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  metadata:
+    name: Resolve Docker Metadata
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.metadata.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve metadata
+        id: metadata
+        uses: ./action/resolve-meta
+        env:
+          TZ: Asia/Shanghai
+          DOCKERHUB_USERNAME: myuser
+          GHCR_USERNAME: myuser
+          ALI_ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+          ALI_ACR_USERNAME: myuser
+        with:
+          context: ${{ inputs.context }}
+          variants: ${{ inputs.variants }}
+          debug: ${{ inputs.debug }}
+
+  docker-build:
+    needs: metadata
+    name: Build Variant (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    if: needs.metadata.outputs.matrix
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix: ${{ fromJson(needs.metadata.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.metadata.imageLines }}
+          tags: ${{ matrix.metadata.tagLines }}
+          labels: ${{ matrix.metadata.labelLines }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: ${{ matrix.pushDocker }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        if: ${{ matrix.pushGhcr }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.build.context }}
+          file: ${{ matrix.build.file }}
+          platforms: ${{ matrix.build.platformLines }}
+          push: ${{ matrix.build.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Push README
+        if: ${{ matrix.readme.push }}
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ matrix.readme.repo }}
+          readme-filepath: ${{ matrix.readme.path }}
+```
+
+## How It Works
+
+### 1. Detect Changed Context
+
+On pull requests:
+- Detects which apps changed based on modified files
+- Automatically selects the changed app
+
+On manual trigger:
+- Uses the specified `context` input
+
+### 2. Load App Configuration
+
+Reads `meta.json` from the app context:
+```json
+{
+  "name": "icones",
+  "variants": {
+    "latest": { ... },
+    "dev": { ... }
+  }
+}
+```
+
+### 3. Filter Variants
+
+Filters variants based on:
+- `variants` input parameter
+- Variant `enabled` status
+- Existence of required files (Dockerfile, version, sha)
+
+### 4. Resolve Metadata
+
+For each variant, generates:
+
+**Image names** with placeholders:
+```json
+["dockerhub-user/icones", "ghcr.io/user/icones"]
+```
+
+**Tags** with version placeholders:
+```json
+["type=raw,value=latest", "type=raw,value=0bc5918"]
+```
+
+**Labels** (OCI annotations):
+```json
+{
+  "org.opencontainers.image.version": "0bc5918",
+  "org.opencontainers.image.source": "https://github.com/...",
+  "org.opencontainers.image.revision": "abc123..."
+}
+```
+
+**Build configuration**:
+```json
+{
+  "platforms": ["linux/amd64", "linux/arm64"],
+  "file": "apps/icones/Dockerfile",
+  "context": "apps/icones",
+  "push": true
+}
+```
+
+### 5. Generate Matrix
+
+Creates GitHub Actions matrix:
+```json
+{
+  "include": [
+    { "variant": "latest", ... },
+    { "variant": "dev", ... }
+  ]
+}
+```
+
+## Environment Variables
+
+<ParamField path="DOCKERHUB_USERNAME" type="string">
+  Docker Hub username for image names.
+
+  ```yaml
+  env:
+    DOCKERHUB_USERNAME: myuser
+  ```
+
+  Generates: `myuser/{app-name}`
+</ParamField>
+
+<ParamField path="GHCR_USERNAME" type="string">
+  GitHub Container Registry username.
+
+  ```yaml
+  env:
+    GHCR_USERNAME: myorg
+  ```
+
+  Generates: `ghcr.io/myorg/{app-name}`
+</ParamField>
+
+<ParamField path="ALI_ACR_REGISTRY" type="string">
+  Aliyun Container Registry URL.
+
+  ```yaml
+  env:
+    ALI_ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  ```
+</ParamField>
+
+<ParamField path="ALI_ACR_USERNAME" type="string">
+  Aliyun Container Registry username.
+
+  ```yaml
+  env:
+    ALI_ACR_USERNAME: myuser
+  ```
+
+  Generates: `{registry}/{username}/{app-name}`
+</ParamField>
+
+## Matrix Fields
+
+Each matrix item contains:
+
+<ResponseField name="name" type="string">
+  App name from meta.json
+</ResponseField>
+
+<ResponseField name="variant" type="string">
+  Variant name (e.g., `latest`, `dev`)
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Docker metadata:
+  - `images`: Array of image names
+  - `imageLines`: Newline-separated image names
+  - `tags`: Array of tags
+  - `tagLines`: Newline-separated tags
+  - `labels`: Array of OCI labels
+  - `labelLines`: Newline-separated labels
+</ResponseField>
+
+<ResponseField name="build" type="object">
+  Build configuration:
+  - `platforms`: Array of platforms
+  - `platformLines`: Newline-separated platforms
+  - `file`: Dockerfile path
+  - `context`: Build context path
+  - `push`: Whether to push image
+</ResponseField>
+
+<ResponseField name="readme" type="object">
+  README push configuration:
+  - `push`: Whether to push README
+  - `path`: README file path
+  - `repo`: Docker Hub repository
+</ResponseField>
+
+<ResponseField name="pushDocker" type="boolean">
+  Whether to push to Docker Hub
+</ResponseField>
+
+<ResponseField name="pushGhcr" type="boolean">
+  Whether to push to GitHub Container Registry
+</ResponseField>
+
+<ResponseField name="pushAli" type="boolean">
+  Whether to push to Aliyun Container Registry
+</ResponseField>
+
+<ResponseField name="hasPreScript" type="boolean">
+  Whether pre-build script exists
+</ResponseField>
+
+<ResponseField name="hasPostScript" type="boolean">
+  Whether post-build script exists
+</ResponseField>
+
+## Integration with Build Workflow
+
+### Pre-build Scripts
+
+```yaml
+- name: Execute Pre-Build Commands
+  if: matrix.hasPreScript
+  working-directory: ${{ matrix.build.context }}
+  run: bash ${{ matrix.variant != 'latest' && format('pre.{0}.sh', matrix.variant) || 'pre.sh' }}
+```
+
+### Post-build Scripts
+
+```yaml
+- name: Execute Post-Build Commands
+  if: matrix.hasPostScript
+  working-directory: ${{ matrix.build.context }}
+  run: bash ${{ matrix.variant != 'latest' && format('post.{0}.sh', matrix.variant) || 'post.sh' }}
+```
+
+## Best Practices
+
+1. **Set registry usernames in environment**:
+   ```yaml
+   env:
+     DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+     GHCR_USERNAME: ${{ github.repository_owner }}
+   ```
+
+2. **Use matrix conditionals for registry-specific steps**:
+   ```yaml
+   if: ${{ matrix.pushDocker }}
+   ```
+
+3. **Validate variants exist before building**:
+   ```yaml
+   if: needs.metadata.outputs.matrix
+   ```
+
+4. **Use proper permissions**:
+   ```yaml
+   permissions:
+     contents: read
+     packages: write  # For GHCR
+   ```
+
+5. **Enable debug for troubleshooting**:
+   ```yaml
+   debug: true
+   ```
+
+## Troubleshooting
+
+### No matrix output
+
+- Verify `context` points to valid app directory
+- Check that variant has `version` and `sha` set
+- Ensure Dockerfile exists
+- Enable `debug: true` for details
+
+### Missing images in matrix
+
+- Set registry usernames in environment variables
+- Check `docker.images` in meta.json
+
+### Platform issues
+
+- Verify platforms are supported by buildx
+- Check QEMU setup for multi-arch builds
+- Consider reducing platforms for faster builds
+
+## Related
+
+- [Meta Schema](/api/meta-schema) - Configuration reference
+- [Docker Configuration](/api/docker-config) - Docker build options
+- [Placeholders](/api/placeholders) - Template variables
+- [Check Version Action](/api/check-version-action) - Version checking

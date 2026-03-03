@@ -1,0 +1,497 @@
+---
+title: Docker Configuration
+description: Docker build and push configuration options
+---
+
+The `docker` field in your variant configuration controls how Docker images are built and pushed.
+
+## Schema
+
+```typescript
+export interface DockerConfig {
+  /** Dockerfile path */
+  file?: string
+  /** Image name templates */
+  images?: string[]
+  /** Tag templates */
+  tags?: string[]
+  /** Build platforms */
+  platforms?: Platform[]
+  /** Docker labels */
+  labels?: Record<string, string>
+  /** Build arguments */
+  buildArgs?: Record<string, string>
+  /** Build secrets */
+  secrets?: string[]
+  /** Output configuration */
+  outputs?: string[]
+  /** Cache configuration */
+  cache?: CacheConfig
+  /** Push to registry */
+  push?: boolean
+  /** Load image locally */
+  load?: boolean
+}
+
+export interface CacheConfig {
+  /** Cache sources */
+  from?: string[]
+  /** Cache targets */
+  to?: string[]
+}
+
+export type Platform =
+  | 'linux/amd64'
+  | 'linux/arm64'
+  | 'linux/arm/v7'
+  | 'linux/arm/v6'
+  | 'linux/386'
+  | 'linux/ppc64le'
+  | 'linux/s390x'
+```
+
+## Configuration Fields
+
+### Dockerfile
+
+<ParamField path="file" type="string" default="Dockerfile or Dockerfile.{variant}">
+  Path to Dockerfile relative to the app context.
+
+  **Default behavior**:
+  - `latest` variant: `Dockerfile`
+  - Other variants: `Dockerfile.{variantName}`
+
+  ```json
+  "file": "Dockerfile.custom"
+  ```
+</ParamField>
+
+### Images
+
+<ParamField path="images" type="string[]">
+  Image name templates. Supports [placeholders](/api/placeholders).
+
+  **Default images** (if not specified):
+  ```json
+  [
+    "dockerhub-user/{name}",
+    "ghcr.io/github-user/{name}",
+    "registry.cn-hangzhou.aliyuncs.com/aliyun-user/{name}"
+  ]
+  ```
+
+  **Custom images**:
+  ```json
+  "images": [
+    "myuser/{{name}}",
+    "ghcr.io/myorg/{{name}}"
+  ]
+  ```
+</ParamField>
+
+<Note>
+The `{name}` placeholder is replaced with the app name from `meta.json`.
+</Note>
+
+### Tags
+
+<ParamField path="tags" type="string[]">
+  Docker image tag templates using [docker/metadata-action](https://github.com/docker/metadata-action) format.
+
+  **Default tags**:
+  ```json
+  [
+    "type=raw,value={variantName}",
+    "type=raw,value={{version}}"
+  ]
+  ```
+
+  **Common tag patterns**:
+  ```json
+  "tags": [
+    "type=raw,value=latest",
+    "type=raw,value={{version}}",
+    "type=raw,value={{major}}",
+    "type=raw,value={{major}}.{{minor}}",
+    "type=raw,value=dev-{{sha}}"
+  ]
+  ```
+</ParamField>
+
+See [Placeholders](/api/placeholders) for available template variables.
+
+### Platforms
+
+<ParamField path="platforms" type="Platform[]" default="['linux/amd64', 'linux/arm64']">
+  Target platforms for multi-arch builds.
+
+  **Supported platforms**:
+  - `linux/amd64` - x86_64 (Intel/AMD)
+  - `linux/arm64` - ARM 64-bit (Apple Silicon, AWS Graviton)
+  - `linux/arm/v7` - ARM 32-bit v7
+  - `linux/arm/v6` - ARM 32-bit v6
+  - `linux/386` - x86 32-bit
+  - `linux/ppc64le` - PowerPC 64-bit
+  - `linux/s390x` - IBM Z
+
+  ```json
+  "platforms": ["linux/amd64", "linux/arm64"]
+  ```
+</ParamField>
+
+<Warning>
+Building for multiple platforms increases build time significantly. Only include platforms you need.
+</Warning>
+
+### Labels
+
+<ParamField path="labels" type="Record<string, string>">
+  Custom Docker labels following [OCI Image Format](https://github.com/opencontainers/image-spec/blob/main/annotations.md).
+
+  **Auto-generated labels**:
+  - `org.opencontainers.image.description`
+  - `org.opencontainers.image.licenses`
+  - `org.opencontainers.image.revision`
+  - `org.opencontainers.image.source`
+  - `org.opencontainers.image.title`
+  - `org.opencontainers.image.url`
+  - `org.opencontainers.image.version`
+
+  **Custom labels**:
+  ```json
+  "labels": {
+    "author": "username",
+    "maintainer": "user@example.com"
+  }
+  ```
+</ParamField>
+
+### Build Arguments
+
+<ParamField path="buildArgs" type="Record<string, string>">
+  Build-time variables passed to Docker.
+
+  ```json
+  "buildArgs": {
+    "NODE_VERSION": "20",
+    "APP_ENV": "production"
+  }
+  ```
+
+  Use in Dockerfile:
+  ```dockerfile
+  ARG NODE_VERSION
+  FROM node:${NODE_VERSION}-alpine
+
+  ARG APP_ENV
+  ENV NODE_ENV=${APP_ENV}
+  ```
+</ParamField>
+
+### Secrets
+
+<ParamField path="secrets" type="string[]">
+  Build secrets for sensitive data (requires Docker BuildKit).
+
+  ```json
+  "secrets": [
+    "id=npm_token,src=/path/to/token",
+    "id=ssh_key,src=$HOME/.ssh/id_rsa"
+  ]
+  ```
+
+  Use in Dockerfile:
+  ```dockerfile
+  RUN --mount=type=secret,id=npm_token \
+      NPM_TOKEN=$(cat /run/secrets/npm_token) \
+      npm install
+  ```
+</ParamField>
+
+### Push
+
+<ParamField path="push" type="boolean" default="true">
+  Push the built image to registries.
+
+  **Automatically disabled for**:
+  - Test apps (`test/` directory)
+  - Local development (ACT mode)
+
+  ```json
+  "push": false
+  ```
+</ParamField>
+
+### Load
+
+<ParamField path="load" type="boolean" default="false">
+  Load the built image into local Docker daemon.
+
+  ```json
+  "load": true
+  ```
+</ParamField>
+
+<Note>
+`push` and `load` are mutually exclusive when using multiple platforms.
+</Note>
+
+### Outputs
+
+<ParamField path="outputs" type="string[]">
+  Custom output configuration for Docker build.
+
+  ```json
+  "outputs": [
+    "type=docker",
+    "type=oci,dest=/tmp/image.tar"
+  ]
+  ```
+</ParamField>
+
+### Cache
+
+<ParamField path="cache" type="CacheConfig">
+  Docker build cache configuration.
+
+  ```json
+  "cache": {
+    "from": ["type=gha"],
+    "to": ["type=gha,mode=max"]
+  }
+  ```
+</ParamField>
+
+<Note>
+By default, Apps Image uses GitHub Actions cache (`type=gha`) automatically.
+</Note>
+
+## Examples
+
+### Minimal Configuration
+
+```json
+{
+  "variants": {
+    "latest": {
+      "version": "1.0.0",
+      "sha": "abc123...",
+      "checkver": { ... }
+      // Uses all defaults:
+      // - file: Dockerfile
+      // - platforms: linux/amd64, linux/arm64
+      // - tags: latest, {{version}}
+    }
+  }
+}
+```
+
+### Custom Tags and Platforms
+
+```json apps/cobalt/meta.json
+{
+  "variants": {
+    "latest": {
+      "version": "11.3",
+      "sha": "e4b53880af4026b8be6a870ae7d8133f744a6181",
+      "checkver": {
+        "type": "version",
+        "repo": "imputnet/cobalt",
+        "file": "web/package.json"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=latest",
+          "type=raw,value={{version}}",
+          "type=raw,value={{major}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Development Variant
+
+```json apps/cobalt/meta.json
+{
+  "variants": {
+    "dev": {
+      "version": "8d9bccc",
+      "sha": "8d9bccc4fedabb6842fab71bd14e805f1ea21336",
+      "checkver": {
+        "type": "sha",
+        "repo": "imputnet/cobalt",
+        "path": "web"
+      },
+      "docker": {
+        "tags": [
+          "type=raw,value=dev",
+          "type=raw,value=dev-{{sha}}"
+        ]
+      }
+    }
+  }
+}
+```
+
+### Single Platform Build
+
+```json apps/readest/meta.json
+{
+  "variants": {
+    "test": {
+      "version": "0.9.101",
+      "sha": "66d2fdf999581c979ee5f19ca8b993cecaf83626",
+      "checkver": {
+        "type": "tag",
+        "repo": "readest/readest"
+      },
+      "docker": {
+        "file": "Dockerfile",
+        "tags": ["type=raw,value=test"],
+        "platforms": ["linux/amd64"]
+      }
+    }
+  }
+}
+```
+
+### Custom Images and Labels
+
+```json apps/haitang/meta.json
+{
+  "variants": {
+    "latest": {
+      "version": "3d5ff9c",
+      "sha": "3d5ff9c222ee76e6635fad44b9df6bd57f3805fb",
+      "checkver": {
+        "type": "sha",
+        "repo": "javayhu/haitang"
+      },
+      "docker": {
+        "labels": {
+          "author": "javayhu"
+        }
+      }
+    }
+  }
+}
+```
+
+### Multi-Registry Push
+
+```json
+{
+  "docker": {
+    "images": [
+      "docker.io/myuser/{{name}}",
+      "ghcr.io/myorg/{{name}}",
+      "registry.example.com/{{name}}"
+    ],
+    "tags": [
+      "type=raw,value=latest",
+      "type=raw,value={{version}}"
+    ]
+  }
+}
+```
+
+This creates tags like:
+- `docker.io/myuser/app:latest`
+- `docker.io/myuser/app:1.2.3`
+- `ghcr.io/myorg/app:latest`
+- `ghcr.io/myorg/app:1.2.3`
+- `registry.example.com/app:latest`
+- `registry.example.com/app:1.2.3`
+
+## Build Scripts
+
+Apps Image supports pre and post build scripts:
+
+### Pre-build Script
+
+<ParamField path="pre.sh" type="file">
+  Script executed before Docker build.
+
+  **Naming**:
+  - `latest` variant: `pre.sh`
+  - Other variants: `pre.{variantName}.sh`
+
+  ```bash apps/myapp/pre.sh
+  #!/bin/bash
+  # Download assets, generate files, etc.
+  npm install
+  npm run build
+  ```
+</ParamField>
+
+### Post-build Script
+
+<ParamField path="post.sh" type="file">
+  Script executed after Docker build.
+
+  **Naming**:
+  - `latest` variant: `post.sh`
+  - Other variants: `post.{variantName}.sh`
+
+  ```bash apps/myapp/post.sh
+  #!/bin/bash
+  # Cleanup, notifications, etc.
+  echo "Build completed!"
+  ```
+</ParamField>
+
+## Registry Authentication
+
+Configure registry credentials in GitHub Secrets:
+
+- **Docker Hub**: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
+- **GHCR**: `GITHUB_TOKEN` (automatic)
+- **Aliyun ACR**: `ALI_ACR_REGISTRY`, `ALI_ACR_USERNAME`, `ALI_ACR_PASSWORD`
+
+## Best Practices
+
+1. **Use semantic versioning tags**:
+   ```json
+   "tags": [
+     "type=raw,value=latest",
+     "type=raw,value={{version}}",
+     "type=raw,value={{major}}.{{minor}}",
+     "type=raw,value={{major}}"
+   ]
+   ```
+
+2. **Optimize platform selection**:
+   - Use `linux/amd64` only for faster builds during development
+   - Add `linux/arm64` for production (Apple Silicon, AWS Graviton)
+
+3. **Use build arguments for customization**:
+   ```json
+   "buildArgs": {
+     "VERSION": "{{version}}",
+     "BUILD_DATE": "{{timestamp}}"
+   }
+   ```
+
+4. **Add meaningful labels**:
+   ```json
+   "labels": {
+     "maintainer": "team@example.com",
+     "documentation": "https://docs.example.com"
+   }
+   ```
+
+5. **Separate dev and production variants**:
+   ```json
+   {
+     "latest": { ... },  // Stable releases
+     "dev": { ... }      // Development builds
+   }
+   ```
+
+## Related
+
+- [Meta Schema](/api/meta-schema) - Complete configuration reference
+- [Placeholders](/api/placeholders) - Template variables for tags
+- [Resolve Meta Action](/api/resolve-meta-action) - Metadata resolution

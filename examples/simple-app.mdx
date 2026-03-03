@@ -1,0 +1,214 @@
+---
+title: Simple Application Example
+description: Learn how to package a simple single-variant application using the Icones icon explorer as a real-world example
+---
+
+This example demonstrates how to create a basic Apps Image configuration for a single-variant application. We'll use **Icones**, an icon explorer application, as our reference.
+
+## Overview
+
+Icones is a simple web application that requires:
+- Cloning from a Git repository
+- Building with Node.js and pnpm
+- Serving static files with nginx
+
+This is a common pattern for modern frontend applications built with frameworks like Vue, React, or Svelte.
+
+## Project Structure
+
+```
+apps/icones/
+├── meta.json
+└── Dockerfile
+```
+
+<Note>
+Simple applications typically only need these two files. No build scripts are required when all steps can be handled directly in the Dockerfile.
+</Note>
+
+## Configuration Files
+
+<CodeGroup>
+
+```json meta.json
+{
+  "name": "icones",
+  "type": "app",
+  "title": "Icones",
+  "slogan": "开源图标浏览器，搜索浏览 150,000+ 图标",
+  "description": "Icon Explorer with Instant searching, powered by Iconify",
+  "license": "MIT",
+  "variants": {
+    "latest": {
+      "version": "0bc5918",
+      "sha": "0bc59182623617a9238023c183a72863c0ebdfca",
+      "checkver": {
+        "type": "sha",
+        "repo": "https://github.com/antfu-collective/icones"
+      }
+    }
+  }
+}
+```
+
+```dockerfile Dockerfile
+FROM alpine/git AS source
+WORKDIR /app
+ARG VERSION=0bc5918
+RUN git clone https://github.com/antfu-collective/icones . && git checkout ${VERSION}
+
+FROM node:22.14.0-alpine3.20 AS build
+WORKDIR /app
+COPY --from=source /app .
+RUN corepack enable && corepack prepare --activate
+RUN pnpm install && pnpm run build
+
+FROM aliuq/nginx:vue
+
+ENV TZ=Asia/Shanghai
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+COPY --from=build /app/dist /app
+
+CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 80
+```
+
+</CodeGroup>
+
+## Understanding the Configuration
+
+### meta.json Breakdown
+
+<Tabs>
+  <Tab title="Basic Metadata">
+    ```json
+    {
+      "name": "icones",
+      "type": "app",
+      "title": "Icones",
+      "slogan": "开源图标浏览器，搜索浏览 150,000+ 图标",
+      "description": "Icon Explorer with Instant searching, powered by Iconify",
+      "license": "MIT"
+    }
+    ```
+    
+    - `name`: Unique identifier (used in image tags)
+    - `type`: Must be "app" for applications
+    - `title`: Human-readable display name
+    - `slogan`: Short marketing description
+    - `description`: Detailed description of the application
+    - `license`: Software license type
+  </Tab>
+  
+  <Tab title="Version Configuration">
+    ```json
+    {
+      "variants": {
+        "latest": {
+          "version": "0bc5918",
+          "sha": "0bc59182623617a9238023c183a72863c0ebdfca",
+          "checkver": {
+            "type": "sha",
+            "repo": "https://github.com/antfu-collective/icones"
+          }
+        }
+      }
+    }
+    ```
+    
+    - `variants`: Defines available versions (this example has only "latest")
+    - `version`: Short version identifier (git commit SHA prefix)
+    - `sha`: Full git commit SHA for reproducible builds
+    - `checkver`: Automatic version checking configuration
+  </Tab>
+</Tabs>
+
+### Dockerfile Breakdown
+
+The Dockerfile uses a **multi-stage build** pattern with three stages:
+
+#### Stage 1: Source
+```dockerfile
+FROM alpine/git AS source
+WORKDIR /app
+ARG VERSION=0bc5918
+RUN git clone https://github.com/antfu-collective/icones . && git checkout ${VERSION}
+```
+
+- Uses lightweight Alpine Linux with Git
+- Clones the repository and checks out the specific commit
+- `VERSION` argument comes from `meta.json` during build
+
+<Tip>
+Using `ARG VERSION` allows the same Dockerfile to build different versions by passing different build arguments.
+</Tip>
+
+#### Stage 2: Build
+```dockerfile
+FROM node:22.14.0-alpine3.20 AS build
+WORKDIR /app
+COPY --from=source /app .
+RUN corepack enable && corepack prepare --activate
+RUN pnpm install && pnpm run build
+```
+
+- Copies source code from the first stage
+- Enables corepack to use pnpm (Node.js package manager)
+- Installs dependencies and builds the application
+- Output is placed in `/app/dist` by default
+
+#### Stage 3: Runtime
+```dockerfile
+FROM aliuq/nginx:vue
+
+ENV TZ=Asia/Shanghai
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+COPY --from=build /app/dist /app
+
+CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 80
+```
+
+- Uses a custom nginx base image configured for Vue applications
+- Copies only the built files (not source or node_modules)
+- Sets environment variables for timezone and production mode
+- Exposes port 80 for HTTP traffic
+
+<Note>
+The final image is much smaller because it only contains the built static files and nginx, not the source code or build dependencies.
+</Note>
+
+## Building and Running
+
+The Apps Image system will automatically:
+
+1. Read the `meta.json` configuration
+2. Pass the `version` and `sha` as build arguments to Docker
+3. Build the image with appropriate tags
+4. Push to the container registry
+
+No manual intervention required!
+
+## Key Takeaways
+
+- **Simple is better**: Only two files needed for basic applications
+- **Multi-stage builds**: Keep images small by separating build and runtime
+- **Version control**: Use git SHAs for reproducible builds
+- **Automatic builds**: The system handles building and tagging automatically
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Variant Setup" icon="layer-group" href="/examples/multi-variant">
+    Learn how to create multiple variants of the same application
+  </Card>
+  <Card title="Build Scripts" icon="scroll" href="/examples/with-build-scripts">
+    Add pre-build and post-build automation with shell scripts
+  </Card>
+</CardGroup>

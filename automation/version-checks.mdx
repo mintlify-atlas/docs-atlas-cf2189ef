@@ -1,0 +1,387 @@
+---
+title: Version Check Workflow
+description: Automated upstream version detection and pull request creation
+---
+
+The Check Version workflow automatically monitors upstream repositories for new releases and creates pull requests when updates are detected.
+
+## Workflow Configuration
+
+### Triggers
+
+The workflow runs in three scenarios:
+
+<CodeGroup>
+
+```yaml Schedule
+schedule:
+  - cron: '0 */2 * * *'  # Every 2 hours
+```
+
+```yaml Manual Dispatch
+workflow_dispatch:
+  inputs:
+    context:
+      description: 'Context directory, e.g. apps/icones'
+      type: choice
+      default: all
+      options:
+        - all
+        - apps/cobalt
+        - apps/icones
+        # ... all available apps
+    create_pr:
+      description: 'Create PR option'
+      type: choice
+      default: 'false'
+      options:
+        - 'true'
+        - 'false'
+        - development
+    debug:
+      description: 'Debug mode'
+      type: boolean
+      default: false
+```
+
+```yaml Push Event
+push:
+  branches:
+    - master
+  paths:
+    - apps/*/meta.json
+    - apps/*/Dockerfile
+    - apps/*/Dockerfile.*
+    - base/*/meta.json
+    - base/*/Dockerfile
+    - base/*/Dockerfile.*
+```
+
+</CodeGroup>
+
+<Warning>
+  The workflow skips execution if the commit message contains `[skip check]`
+</Warning>
+
+## Workflow Inputs
+
+<ParamField path="context" type="string" default="all">
+  Specifies which app context to check. Use `all` to check all apps, or specify a specific path like `apps/icones`.
+  
+  Available contexts include:
+  - Apps: `apps/cobalt`, `apps/icones`, `apps/readest`, etc.
+  - Base images: `base/alpine`, `base/nginx`, `base/vscode`
+  - Test contexts: `test/icones`, `test/weektodo`
+</ParamField>
+
+<ParamField path="create_pr" type="string" default="false">
+  Controls pull request creation behavior:
+  - `'true'` - Create PR to master branch
+  - `'false'` - Only check versions, don't create PR
+  - `'development'` - Create PR to development branch
+</ParamField>
+
+<ParamField path="debug" type="boolean" default="false">
+  Enable debug mode for verbose logging and troubleshooting.
+</ParamField>
+
+## Job Steps
+
+### 1. Checkout Repository
+
+```yaml
+- name: Checkout
+  uses: actions/checkout@v4
+  with:
+    fetch-depth: 0  # Full history for git operations
+```
+
+Clones the repository with complete history to enable git operations.
+
+### 2. Cache Git Repositories
+
+```yaml
+- name: Cache Git repositories
+  uses: actions/cache@v4
+  with:
+    path: .git-cache
+    key: git-repos-${{ hashFiles('**/meta.json') }}
+    restore-keys: |
+      git-repos-
+```
+
+Caches cloned upstream repositories in `.git-cache` to:
+- Speed up subsequent version checks
+- Reduce network bandwidth
+- Improve workflow execution time
+
+The cache key is based on `meta.json` files, so cache invalidates when metadata changes.
+
+### 3. Execute Version Check
+
+```yaml
+- name: Check Version
+  uses: ./action/check-version
+  env:
+    TZ: Asia/Shanghai
+  with:
+    token: ${{ secrets.PAT }}
+    context: ${{ inputs.context }}
+    create_pr: ${{ inputs.create_pr }}
+    debug: ${{ inputs.debug }}
+```
+
+Runs the custom `check-version` action defined in `/action/check-version/action.yml`.
+
+## Check Version Action
+
+The action is implemented in TypeScript and performs the following operations:
+
+### Action Inputs
+
+<ParamField path="token" type="string" required={false}>
+  Personal Access Token (PAT) for repository access. Required when creating pull requests.
+</ParamField>
+
+<ParamField path="context" type="string" required={false}>
+  Context directory to check (e.g., `apps/icones`). If not specified, checks all contexts.
+</ParamField>
+
+<ParamField path="create_pr" type="string" default="false">
+  Controls PR creation: `'true'`, `'false'`, or `'development'`
+</ParamField>
+
+<ParamField path="debug" type="string" default="false">
+  Enable debug logging
+</ParamField>
+
+### Execution Flow
+
+The action follows this workflow (from `action/src/check.ts:16-77`):
+
+<Steps>
+  <Step title="Initialize Apps Manager">
+    ```typescript
+    const appsManager = new CheckAppsManager()
+    ```
+    Creates manager instance to handle app lifecycle
+  </Step>
+  
+  <Step title="Scan Applications">
+    ```typescript
+    const appPaths = await appsManager.scanApps()
+    if (!appPaths?.length) {
+      logger.warn('No applications found to process')
+      return
+    }
+    ```
+    Discovers all apps based on context input
+  </Step>
+  
+  <Step title="Load App Contexts">
+    ```typescript
+    await appsManager.loadApps(appPaths)
+    ```
+    Loads metadata and configuration for each app
+  </Step>
+  
+  <Step title="Check Versions">
+    ```typescript
+    const { allApps, outdatedApps } = await appsManager.checkAllVersions()
+    ```
+    Compares current versions with upstream releases
+  </Step>
+  
+  <Step title="Build PR Data">
+    ```typescript
+    if (config.createPr || isAct) {
+      const prResults = await appsManager.buildPrDatas(outdatedApps)
+      await logger.json(prResults, 'PR Datas')
+    }
+    ```
+    Generates pull request data for outdated apps
+  </Step>
+  
+  <Step title="Create Pull Requests">
+    ```typescript
+    if (config.createPr) {
+      const createPrResults = await appsManager.createPr(prResults)
+      await logger.json(createPrResults, 'Create PR Results')
+    }
+    ```
+    Creates PRs if enabled
+  </Step>
+  
+  <Step title="Generate Summary">
+    ```typescript
+    appsManager.generateSummary(outdatedApps, allApps, createPrResults)
+    core.summary.write()
+    ```
+    Outputs summary to GitHub Actions UI
+  </Step>
+</Steps>
+
+## Version Check Logic
+
+The version checking process:
+
+1. **Read `meta.json`**: Parses app metadata containing upstream repository info
+2. **Clone Upstream**: Clones or updates cached upstream repository
+3. **Fetch Tags**: Retrieves latest tags from upstream
+4. **Compare Versions**: Compares current version with latest upstream version
+5. **Detect Updates**: Identifies apps with newer versions available
+
+## Pull Request Creation
+
+When `create_pr` is enabled:
+
+<CodeGroup>
+
+```typescript PR to Master
+// create_pr: 'true'
+// Creates PR to master branch
+{
+  base: 'master',
+  head: 'update-{app-name}-{version}',
+  title: 'Update {app-name} to {version}'
+}
+```
+
+```typescript PR to Development
+// create_pr: 'development'
+// Creates PR to development branch
+{
+  base: 'development',
+  head: 'update-{app-name}-{version}',
+  title: 'Update {app-name} to {version}'
+}
+```
+
+</CodeGroup>
+
+## Output Examples
+
+### All Up to Date
+
+```bash
+🎉 All apps are up to date, no updates needed
+```
+
+<Note>
+  When all apps are current, the workflow completes without creating PRs
+</Note>
+
+### Updates Found
+
+```bash
+Total 15 apps checked, 3 apps needs update
+```
+
+The summary includes:
+- Total apps checked
+- Number of outdated apps
+- List of apps with available updates
+- Version differences
+- PR creation results (if enabled)
+
+## Permissions Required
+
+```yaml
+permissions:
+  contents: read
+```
+
+<Warning>
+  For PR creation, ensure `PAT` secret has:
+  - `repo` scope for private repositories
+  - `public_repo` scope for public repositories
+  - `pull_request` write access
+</Warning>
+
+## Skip Version Check
+
+To skip the version check on a specific commit:
+
+```bash
+git commit -m "Update configuration [skip check]"
+```
+
+The workflow checks for `[skip check]` in commit messages:
+
+```yaml
+if: |
+  github.event_name == 'workflow_dispatch' || 
+  github.event_name == 'schedule' || 
+  (github.event_name == 'push' && 
+   github.event.head_commit && 
+   !contains(github.event.head_commit.message, '[skip check]'))
+```
+
+## Caching Strategy
+
+The Git cache significantly improves performance:
+
+```yaml
+path: .git-cache
+key: git-repos-${{ hashFiles('**/meta.json') }}
+restore-keys: |
+  git-repos-
+```
+
+**Cache Benefits:**
+- Reduces clone time for upstream repositories
+- Minimizes network usage
+- Speeds up subsequent checks
+
+**Cache Invalidation:**
+- Cache updates when any `meta.json` file changes
+- Falls back to partial match with `git-repos-` prefix
+
+## Troubleshooting
+
+### Enable Debug Mode
+
+For verbose logging:
+
+1. Manual trigger: Set `debug` input to `true`
+2. Check action logs for detailed information
+3. Review JSON output for app data and PR results
+
+### Common Issues
+
+<AccordionGroup>
+  <Accordion title="No apps found to process">
+    **Cause**: Invalid context path or no apps in specified directory
+    
+    **Solution**: Verify context path matches directory structure (e.g., `apps/icones`, not `icones`)
+  </Accordion>
+  
+  <Accordion title="PR creation fails">
+    **Cause**: Missing or invalid PAT token
+    
+    **Solution**: 
+    - Ensure `PAT` secret is configured
+    - Verify token has required permissions
+    - Check token hasn't expired
+  </Accordion>
+  
+  <Accordion title="Version check times out">
+    **Cause**: Upstream repository is large or network is slow
+    
+    **Solution**:
+    - Wait for cache to populate
+    - Check upstream repository availability
+    - Consider increasing workflow timeout
+  </Accordion>
+</AccordionGroup>
+
+## Related Workflows
+
+<CardGroup cols={2}>
+  <Card title="Build Image" icon="docker" href="/automation/image-building">
+    Triggered after PR merge to build updated images
+  </Card>
+  <Card title="All Workflows" icon="list" href="/automation/workflows">
+    View complete workflow overview
+  </Card>
+</CardGroup>
