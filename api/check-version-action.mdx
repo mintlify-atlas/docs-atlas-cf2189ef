@@ -128,12 +128,34 @@ jobs:
   ```
 </ParamField>
 
+<ParamField path="concurrency" type="number" default="3">
+  Number of apps to check concurrently. Controls parallelism.
+
+  ```yaml
+  with:
+    concurrency: 5
+  ```
+</ParamField>
+
 <ParamField path="debug" type="boolean" default="false">
   Enable debug logging.
 
   ```yaml
   with:
     debug: true
+  ```
+</ParamField>
+
+<ParamField path="logFormat" type="'simple' | 'detailed' | 'json'">
+  Log output format for debugging.
+
+  - `simple` - Minimal output
+  - `detailed` - Verbose logging
+  - `json` - JSON formatted logs
+
+  ```yaml
+  with:
+    logFormat: detailed
   ```
 </ParamField>
 
