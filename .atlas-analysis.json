@@ -1,0 +1,110 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Apps Image",
+  "projectDescription": "Automated Docker image builder with version tracking and multi-variant support for various applications",
+  "theme": "aspen",
+  "primaryColor": "#2563eb",
+  "lightColor": "#3b82f6",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/meta-json",
+              "concepts/variants",
+              "concepts/version-checking"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/adding-applications",
+              "guides/base-images",
+              "guides/build-scripts",
+              "guides/docker-configuration",
+              "guides/local-testing"
+            ]
+          },
+          {
+            "group": "Automation",
+            "pages": [
+              "automation/workflows",
+              "automation/version-checks",
+              "automation/image-building"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/simple-app",
+              "examples/multi-variant",
+              "examples/with-build-scripts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Meta Schema",
+            "pages": [
+              "api/meta-schema",
+              "api/checkver-types",
+              "api/docker-config",
+              "api/placeholders"
+            ]
+          },
+          {
+            "group": "Actions",
+            "pages": [
+              "api/check-version-action",
+              "api/resolve-meta-action"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Image Catalog",
+        "groups": [
+          {
+            "group": "Available Images",
+            "pages": [
+              "images/overview",
+              "images/apps",
+              "images/base"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automated version checking for applications from GitHub repositories",
+    "Multi-variant image support (latest, dev, stable, etc.)",
+    "Customizable build scripts (pre.sh/post.sh) for complex build processes",
+    "Automatic PR creation for version updates",
+    "Multi-platform Docker image building (amd64, arm64)",
+    "Version placeholder templating in Dockerfiles and scripts",
+    "GitHub Actions integration with workflow automation",
+    "Multiple registry support (Docker Hub, GHCR, Alibaba ACR)"
+  ],
+  "publicApiSurface": [
+    "check-version action - Automated version checking",
+    "resolve-meta action - Docker metadata resolution",
+    "meta.json schema - Application metadata definition",
+    "Checkver types: version, tag, sha, manual",
+    "Docker configuration options",
+    "Version placeholders: {{version}}, {{sha}}, {{major}}, {{minor}}",
+    "Build lifecycle scripts: pre.sh, post.sh"
+  ]
+}
